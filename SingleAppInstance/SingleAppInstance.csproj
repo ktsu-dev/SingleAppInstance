@@ -9,5 +9,6 @@
   <ItemGroup>
     <PackageReference Include="ktsu.AppDataStorage" />
     <PackageReference Include="ktsu.Semantics.Paths" />
+  <PackageReference Include="Polyfill" />
   </ItemGroup>
 </Project>
