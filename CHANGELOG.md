@@ -1,3 +1,9 @@
+## v1.2.15 (patch)
+
+Changes since v1.2.14:
+
+- Remove outdated Copilot documentation and add CLAUDE.md for project guidance ([@matt-edmondson](https://github.com/matt-edmondson))
+
 ## v1.2.15-pre.1 (prerelease)
 
 Changes since v1.2.14:

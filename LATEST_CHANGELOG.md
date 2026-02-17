@@ -1,6 +1,6 @@
-## v1.2.15-pre.1 (prerelease)
+## v1.2.15 (patch)
 
 Changes since v1.2.14:
 
-- Sync .github\workflows\dotnet.yml ([@KtsuTools](https://github.com/KtsuTools))
+- Remove outdated Copilot documentation and add CLAUDE.md for project guidance ([@matt-edmondson](https://github.com/matt-edmondson))
 
