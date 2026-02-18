@@ -1,6 +1,9 @@
-## v1.2.15
+## v1.2.16 (patch)
 
-No significant changes detected since v1.2.15.
+Changes since v1.2.15:
+
+- Bump Polyfill from 9.8.1 to 9.9.0 ([@dependabot[bot]](https://github.com/dependabot[bot]))
+- Bump the ktsu group with 3 updates ([@dependabot[bot]](https://github.com/dependabot[bot]))
 
 ## v1.2.15 (patch)
 
