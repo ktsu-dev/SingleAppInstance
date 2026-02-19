@@ -5,8 +5,8 @@
   <ItemGroup>
     <PackageVersion Include="ktsu.AppDataStorage" Version="1.15.19" />
     <PackageVersion Include="ktsu.Semantics.Paths" Version="1.0.31" />
-    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.102" />
-    <PackageVersion Include="Microsoft.SourceLink.AzureRepos.Git" Version="10.0.102" />
+    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.103" />
+    <PackageVersion Include="Microsoft.SourceLink.AzureRepos.Git" Version="10.0.103" />
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.3.1" />
     <PackageVersion Include="MSTest.TestAdapter" Version="4.0.2" />
     <PackageVersion Include="MSTest.TestFramework" Version="4.0.2" />
