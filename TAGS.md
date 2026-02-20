@@ -1,0 +1,1 @@
+.NET;C#;dotnet;csharp;single instance;single app instance;mutex;process;PID;PID file;instance management;application lifecycle;race condition;desktop application;library;MIT License;lightweight;cross-platform

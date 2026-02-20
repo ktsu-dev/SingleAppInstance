@@ -2,8 +2,6 @@
 // All rights reserved.
 // Licensed under the MIT license.
 
-[assembly: DoNotParallelize()]
-
 namespace ktsu.SingleAppInstance.Test;
 
 using System.Diagnostics;

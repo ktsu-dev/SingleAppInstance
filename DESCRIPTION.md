@@ -1,1 +1,1 @@
-A .NET library that ensures only one instance of your application is running at a time.
+A lightweight .NET library that ensures only one instance of an application is running at a time. Uses a JSON-serialized PID file with multi-attribute process verification (PID, name, start time, executable path) for accurate instance detection, built-in race condition handling for simultaneous startups, and backward compatibility with legacy PID formats. Supports .NET 10.0 through .NET Standard 2.0.
