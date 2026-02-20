@@ -103,114 +103,180 @@ public static class SingleAppInstance
 	/// </remarks>
 	internal static bool IsAlreadyRunning()
 	{
-		int currentPid;
-#if NET5_0_OR_GREATER
-		currentPid = Environment.ProcessId;
-#else
-		currentPid = Process.GetCurrentProcess().Id;
-#endif
+		int currentPid = GetCurrentProcessId();
+
 		try
 		{
 			string pidFileContents = File.ReadAllText(PidFilePath);
-
-			// Try to deserialize the JSON content
-			ProcessInfo? storedProcess;
-			try
-			{
-				storedProcess = JsonSerializer.Deserialize<ProcessInfo>(pidFileContents);
-				if (storedProcess == null)
-				{
-					return false;
-				}
-			}
-			catch (JsonException)
-			{
-				// Fallback for backward compatibility with older versions that only stored the PID
-				if (int.TryParse(pidFileContents, NumberStyles.Integer, CultureInfo.InvariantCulture, out int filePid))
-				{
-					// If it's the current process, allow it to run
-					if (filePid == currentPid)
-					{
-						return false;
-					}
-
-					// Legacy check - just verify if the process is running
-					return Process.GetProcesses().Any(p => p.Id == filePid);
-				}
-
-				return false;
-			}
-
-			// If the stored PID is the current process, allow it to run
-			if (storedProcess.ProcessId == currentPid)
-			{
-				return false;
-			}
-
-			// Check if the process is still running
-			try
-			{
-				Process runningProcess = Process.GetProcessById(storedProcess.ProcessId);
-
-				// Verify it's the same application by checking name and module filename
-				if (runningProcess != null &&
-					!runningProcess.HasExited &&
-					string.Equals(runningProcess.ProcessName, storedProcess.ProcessName, StringComparison.Ordinal) &&
-					runningProcess.MainModule != null &&
-					string.Equals(runningProcess.MainModule.FileName, storedProcess.MainModuleFileName, StringComparison.OrdinalIgnoreCase))
-				{
-					return true;
-				}
-			}
-			catch (ArgumentException)
-			{
-				// Process not found - no longer running
-			}
-			catch (InvalidOperationException)
-			{
-				// Process has exited
-			}
-			catch (System.ComponentModel.Win32Exception)
-			{
-				// Access denied - handle more conservatively
-				// If we can't access process details, we can't verify if it's our app
-				// Let's be cautious and assume it might be our application
-
-				try
-				{
-					Process process = Process.GetProcessById(storedProcess.ProcessId);
-
-					if (process != null && !process.HasExited)
-					{
-						// Process exists but we can't access its details
-						// Check just the process name which is typically accessible
-						if (string.Equals(process.ProcessName, storedProcess.ProcessName, StringComparison.Ordinal))
-						{
-							return true;
-						}
-					}
-				}
-				catch (ArgumentException)
-				{
-					// Process doesn't exist
-				}
-				catch (InvalidOperationException)
-				{
-					// Process has exited
-				}
-			}
+			return CheckPidFileContents(pidFileContents, currentPid);
 		}
 		catch (DirectoryNotFoundException)
 		{
+			// PID directory doesn't exist yet - no instance running
 		}
 		catch (FileNotFoundException)
 		{
+			// PID file doesn't exist - no instance running
 		}
 		catch (FormatException)
 		{
+			// PID file content is corrupted - treat as no instance running
 		}
 
 		return false;
+	}
+
+	/// <summary>
+	/// Gets the current process ID using the most efficient method available.
+	/// </summary>
+	/// <returns>The current process ID.</returns>
+#if NET5_0_OR_GREATER
+	private static int GetCurrentProcessId() => Environment.ProcessId;
+#else
+	private static int GetCurrentProcessId()
+	{
+		using (Process currentProc = Process.GetCurrentProcess())
+		{
+			return currentProc.Id;
+		}
+	}
+#endif
+
+	/// <summary>
+	/// Parses the PID file contents and checks whether the stored process is still running.
+	/// </summary>
+	/// <param name="pidFileContents">The raw contents of the PID file.</param>
+	/// <param name="currentPid">The current process ID.</param>
+	/// <returns><c>true</c> if a different instance of the application is running; otherwise, <c>false</c>.</returns>
+	private static bool CheckPidFileContents(string pidFileContents, int currentPid)
+	{
+		ProcessInfo? storedProcess;
+		try
+		{
+			storedProcess = JsonSerializer.Deserialize<ProcessInfo>(pidFileContents);
+			if (storedProcess == null)
+			{
+				return false;
+			}
+		}
+		catch (JsonException)
+		{
+			return HandleLegacyPidFile(pidFileContents, currentPid);
+		}
+
+		if (storedProcess.ProcessId == currentPid)
+		{
+			return false;
+		}
+
+		return IsStoredProcessRunning(storedProcess);
+	}
+
+	/// <summary>
+	/// Handles backward-compatible legacy PID files that contain only a plain integer PID.
+	/// </summary>
+	/// <param name="pidFileContents">The raw contents of the PID file.</param>
+	/// <param name="currentPid">The current process ID.</param>
+	/// <returns><c>true</c> if the legacy PID corresponds to a running process; otherwise, <c>false</c>.</returns>
+	private static bool HandleLegacyPidFile(string pidFileContents, int currentPid)
+	{
+		if (!int.TryParse(pidFileContents, NumberStyles.Integer, CultureInfo.InvariantCulture, out int filePid))
+		{
+			return false;
+		}
+
+		if (filePid == currentPid)
+		{
+			return false;
+		}
+
+		return IsProcessRunning(filePid);
+	}
+
+	/// <summary>
+	/// Checks if the process described by the stored process info is still running
+	/// and matches the expected application.
+	/// </summary>
+	/// <param name="storedProcess">The process information read from the PID file.</param>
+	/// <returns><c>true</c> if the stored process is still running and matches; otherwise, <c>false</c>.</returns>
+	private static bool IsStoredProcessRunning(ProcessInfo storedProcess)
+	{
+		try
+		{
+			using Process runningProcess = Process.GetProcessById(storedProcess.ProcessId);
+
+			return !runningProcess.HasExited &&
+				string.Equals(runningProcess.ProcessName, storedProcess.ProcessName, StringComparison.Ordinal) &&
+				runningProcess.MainModule != null &&
+				string.Equals(runningProcess.MainModule.FileName, storedProcess.MainModuleFileName, StringComparison.OrdinalIgnoreCase);
+		}
+		catch (ArgumentException)
+		{
+			// Process not found - no longer running
+			return false;
+		}
+		catch (InvalidOperationException)
+		{
+			// Process has exited
+			return false;
+		}
+		catch (System.ComponentModel.Win32Exception)
+		{
+			// Access denied to full process details - fall back to name-only check
+			return IsStoredProcessRunningByName(storedProcess);
+		}
+	}
+
+	/// <summary>
+	/// Fallback check when full process access is denied. Verifies only the process name.
+	/// </summary>
+	/// <param name="storedProcess">The process information read from the PID file.</param>
+	/// <returns><c>true</c> if a process with the stored PID and name is running; otherwise, <c>false</c>.</returns>
+	private static bool IsStoredProcessRunningByName(ProcessInfo storedProcess)
+	{
+		try
+		{
+			using Process process = Process.GetProcessById(storedProcess.ProcessId);
+
+			return !process.HasExited &&
+				string.Equals(process.ProcessName, storedProcess.ProcessName, StringComparison.Ordinal);
+		}
+		catch (ArgumentException)
+		{
+			// Process doesn't exist
+			return false;
+		}
+		catch (InvalidOperationException)
+		{
+			// Process has exited
+			return false;
+		}
+		catch (System.ComponentModel.Win32Exception)
+		{
+			// Access denied even for basic process info - cannot determine state
+			return false;
+		}
+	}
+
+	/// <summary>
+	/// Checks if a process with the given PID is currently running.
+	/// </summary>
+	/// <param name="pid">The process ID to check.</param>
+	/// <returns><c>true</c> if a process with the given PID is running; otherwise, <c>false</c>.</returns>
+	private static bool IsProcessRunning(int pid)
+	{
+		Process[] processes = Process.GetProcesses();
+		try
+		{
+			return Array.Exists(processes, p => p.Id == pid);
+		}
+		finally
+		{
+			foreach (Process p in processes)
+			{
+				p.Dispose();
+			}
+		}
 	}
 
 	/// <summary>
@@ -223,7 +289,7 @@ public static class SingleAppInstance
 	{
 		Directory.CreateDirectory(PidDirectoryPath);
 
-		Process currentProcess = Process.GetCurrentProcess();
+		using Process currentProcess = Process.GetCurrentProcess();
 		ProcessInfo processInfo = new()
 		{
 			ProcessId = currentProcess.Id,
