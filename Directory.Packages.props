@@ -3,8 +3,8 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
-    <PackageVersion Include="ktsu.AppDataStorage" Version="1.16.0" />
-    <PackageVersion Include="ktsu.Semantics.Paths" Version="1.0.31" />
+    <PackageVersion Include="ktsu.AppDataStorage" Version="1.16.1" />
+    <PackageVersion Include="ktsu.Semantics.Paths" Version="1.0.32" />
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.103" />
     <PackageVersion Include="Microsoft.SourceLink.AzureRepos.Git" Version="10.0.103" />
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.3.1" />
