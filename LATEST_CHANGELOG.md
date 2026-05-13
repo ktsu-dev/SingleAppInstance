@@ -1,4 +1,6 @@
-## v1.3.21
+## v1.3.22 (patch)
 
-No significant changes detected since v1.3.21.
+Changes since v1.3.21:
+
+- Bump the microsoft group with 2 updates ([@dependabot[bot]](https://github.com/dependabot[bot]))
 
