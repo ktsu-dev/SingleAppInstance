@@ -1,6 +1,7 @@
-## v1.3.33 (patch)
+## v1.3.34 (patch)
 
-Changes since v1.3.32:
+Changes since v1.3.33:
 
-- Remove stale files ([@matt-edmondson](https://github.com/matt-edmondson))
+- Bump Polyfill from 10.8.1 to 10.10.0 ([@dependabot[bot]](https://github.com/dependabot[bot]))
+- Bump the ktsu group with 5 updates ([@dependabot[bot]](https://github.com/dependabot[bot]))
 
