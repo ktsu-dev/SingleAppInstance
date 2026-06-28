@@ -1,12 +1,12 @@
-﻿<Project>
+<Project>
   <Sdk Name="Microsoft.NET.Sdk" />
   <Sdk Name="ktsu.Sdk" />
 
   <ItemGroup>
     <PackageReference Include="ktsu.AppDataStorage" />
     <PackageReference Include="ktsu.Semantics.Paths" />
-    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
-    <PackageReference Include="Microsoft.SourceLink.AzureRepos.Git" PrivateAssets="All" />
     <PackageReference Include="Polyfill" />
-  </ItemGroup>
+  
+    <PackageReference Include="System.Text.Json" />
+    <PackageReference Include="ktsu.Semantics.Strings" /></ItemGroup>
 </Project>
