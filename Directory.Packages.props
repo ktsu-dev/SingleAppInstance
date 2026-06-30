@@ -3,12 +3,12 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
-    <PackageVersion Include="ktsu.AppDataStorage" Version="1.16.25" />
-    <PackageVersion Include="ktsu.Semantics.Paths" Version="2.2.0" />
+    <PackageVersion Include="ktsu.AppDataStorage" Version="1.16.26" />
+    <PackageVersion Include="ktsu.Semantics.Paths" Version="2.3.0" />
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.3.1" />
     <PackageVersion Include="Polyfill" Version="10.11.1" />
     <PackageVersion Include="System.Memory" Version="4.6.3" />
-    <PackageVersion Include="ktsu.Semantics.Strings" Version="2.2.0" />
+    <PackageVersion Include="ktsu.Semantics.Strings" Version="2.3.0" />
     <PackageVersion Include="System.Text.Json" Version="10.0.9" />
   </ItemGroup>
 </Project>
