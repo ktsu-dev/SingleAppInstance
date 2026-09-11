@@ -5,7 +5,7 @@
   <ItemGroup>
     <PackageVersion Include="ktsu.AppDataStorage" Version="1.16.54" />
     <PackageVersion Include="ktsu.Semantics.Paths" Version="4.0.0" />
-    <PackageVersion Include="Polyfill" Version="11.2.0" />
+    <PackageVersion Include="Polyfill" Version="11.3.0" />
     <PackageVersion Include="System.Memory" Version="4.6.3" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
     <PackageVersion Include="ktsu.Semantics.Strings" Version="4.0.0" />
