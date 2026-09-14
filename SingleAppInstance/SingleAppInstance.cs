@@ -281,7 +281,7 @@ public static class SingleAppInstance
 			using Process runningProcess = Process.GetProcessById(pid);
 
 			return !runningProcess.HasExited &&
-				string.Equals(runningProcess.ProcessName, currentProcessName, StringComparison.Ordinal);
+				IsSameApplicationName(runningProcess.ProcessName, currentProcessName);
 		}
 		catch (ArgumentException)
 		{
@@ -298,6 +298,34 @@ public static class SingleAppInstance
 			// Access denied to process details - identity cannot be confirmed
 			return false;
 		}
+	}
+
+	/// <summary>
+	/// The longest process name some platforms report when asked about a process other than the current one.
+	/// </summary>
+	/// <remarks>Linux stores at most 15 characters of a process name, so longer names are read back truncated.</remarks>
+	private const int TruncatedProcessNameLength = 15;
+
+	/// <summary>
+	/// Compares the name of another running process against the current process's own name.
+	/// </summary>
+	/// <param name="runningProcessName">The name reported for the other running process.</param>
+	/// <param name="currentProcessName">The name reported for the current process.</param>
+	/// <returns><c>true</c> if both names describe the same application; otherwise, <c>false</c>.</returns>
+	/// <remarks>
+	/// The current process reports its full name while another process's name can come back truncated,
+	/// so a name truncated at exactly the platform limit is accepted when it prefixes the current name.
+	/// </remarks>
+	private static bool IsSameApplicationName(string runningProcessName, string currentProcessName)
+	{
+		if (string.Equals(runningProcessName, currentProcessName, StringComparison.Ordinal))
+		{
+			return true;
+		}
+
+		return runningProcessName.Length == TruncatedProcessNameLength &&
+			currentProcessName.Length > TruncatedProcessNameLength &&
+			currentProcessName.StartsWith(runningProcessName, StringComparison.Ordinal);
 	}
 
 	/// <summary>

@@ -167,14 +167,7 @@ public class SingleAppInstanceTests
 		// application's own process name, which is as close to another instance as the legacy
 		// format can describe
 		string pidFilePath = SingleAppInstance.PidFilePath;
-		using Process currentProcess = Process.GetCurrentProcess();
-		string currentProcessName = currentProcess.ProcessName;
-
-		using HelperProcess helper = HelperProcess.Start(currentProcessName);
-		if (!string.Equals(helper.Process.ProcessName, currentProcessName, StringComparison.Ordinal))
-		{
-			Assert.Inconclusive($"Could not launch a helper process named '{currentProcessName}' on this platform; it reported '{helper.Process.ProcessName}'");
-		}
+		using HelperProcess helper = StartInstanceLookalikeProcess();
 
 		File.WriteAllText(pidFilePath, helper.Process.Id.ToString(CultureInfo.InvariantCulture));
 
@@ -382,21 +375,12 @@ public class SingleAppInstanceTests
 	[TestMethod]
 	public void ShouldLaunch_WhenAlreadyRunning_ShouldReturnFalse()
 	{
-		// Arrange - describe a genuinely running helper process in the PID file so that the full
-		// identity verification in IsAlreadyRunning() succeeds on the first call
+		// Arrange - a running process carrying this application's name, recorded in the legacy
+		// format, is what another instance looks like to IsAlreadyRunning()
 		string pidFilePath = SingleAppInstance.PidFilePath;
+		using HelperProcess helper = StartInstanceLookalikeProcess();
 
-		using HelperProcess helper = HelperProcess.Start(processName: null);
-
-		ProcessInfo processInfo = new()
-		{
-			ProcessId = helper.Process.Id,
-			ProcessName = helper.Process.ProcessName,
-			StartTime = helper.Process.StartTime,
-			MainModuleFileName = helper.Process.MainModule?.FileName,
-		};
-
-		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(processInfo));
+		File.WriteAllText(pidFilePath, helper.Process.Id.ToString(CultureInfo.InvariantCulture));
 
 		// Act
 		bool result = SingleAppInstance.ShouldLaunch();
@@ -518,8 +502,10 @@ public class SingleAppInstanceTests
 
 			try
 			{
+				// A name that prefixes the current process's name is excluded too, because a
+				// platform that truncates process names reports this application that way
 				isUsable = candidate.Id != currentProcess.Id &&
-					!string.Equals(candidate.ProcessName, currentProcess.ProcessName, StringComparison.Ordinal);
+					!currentProcess.ProcessName.StartsWith(candidate.ProcessName, StringComparison.Ordinal);
 			}
 			catch (InvalidOperationException)
 			{
@@ -542,47 +528,68 @@ public class SingleAppInstanceTests
 	}
 
 	/// <summary>
+	/// Launches a long-lived process that reports this application's own process name, so it is
+	/// indistinguishable from another instance to a PID file that records nothing but a PID.
+	/// </summary>
+	private static HelperProcess StartInstanceLookalikeProcess()
+	{
+		using Process currentProcess = Process.GetCurrentProcess();
+		string currentProcessName = currentProcess.ProcessName;
+
+		HelperProcess helper = HelperProcess.Start(currentProcessName);
+		string helperProcessName = helper.Process.ProcessName;
+
+		// Some platforms report another process's name truncated, so a prefix of the current
+		// process's name is as close a lookalike as the platform allows
+		bool isLookalike = string.Equals(helperProcessName, currentProcessName, StringComparison.Ordinal) ||
+			(helperProcessName.Length < currentProcessName.Length &&
+				currentProcessName.StartsWith(helperProcessName, StringComparison.Ordinal));
+
+		if (!isLookalike)
+		{
+			helper.Dispose();
+			Assert.Inconclusive($"Could not launch a helper process named '{currentProcessName}' on this platform; it reported '{helperProcessName}'");
+		}
+
+		return helper;
+	}
+
+	/// <summary>
 	/// A long-lived child process used to stand in for another instance of the application.
 	/// </summary>
 	/// <remarks>
-	/// When a process name is requested, a long-running system executable is copied to a temporary
-	/// file with that name so the child reports the requested process name to the operating system.
+	/// A long-running system executable is copied to a temporary file named after the requested
+	/// process name, so the child reports that process name to the operating system.
 	/// </remarks>
 	private sealed class HelperProcess : IDisposable
 	{
-		private readonly string? temporaryDirectory;
+		private readonly string temporaryDirectory;
 
 		public Process Process { get; }
 
-		private HelperProcess(Process process, string? temporaryDirectory)
+		private HelperProcess(Process process, string temporaryDirectory)
 		{
 			Process = process;
 			this.temporaryDirectory = temporaryDirectory;
 		}
 
-		public static HelperProcess Start(string? processName)
+		public static HelperProcess Start(string processName)
 		{
 			bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-			string executable = isWindows
+			string systemExecutable = isWindows
 				? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "ping.exe")
 				: "/bin/sleep";
 			string arguments = isWindows ? "-n 120 127.0.0.1" : "120";
-			string? temporaryDirectory = null;
 
-			if (processName is not null)
+			string temporaryDirectory = Path.Combine(Path.GetTempPath(), $"{nameof(SingleAppInstanceTests)}_{Guid.NewGuid():N}");
+			Directory.CreateDirectory(temporaryDirectory);
+
+			string executable = Path.Combine(temporaryDirectory, isWindows ? $"{processName}.exe" : processName);
+			File.Copy(systemExecutable, executable);
+
+			if (!isWindows)
 			{
-				temporaryDirectory = Path.Combine(Path.GetTempPath(), $"{nameof(SingleAppInstanceTests)}_{Guid.NewGuid():N}");
-				Directory.CreateDirectory(temporaryDirectory);
-
-				string copiedExecutable = Path.Combine(temporaryDirectory, isWindows ? $"{processName}.exe" : processName);
-				File.Copy(executable, copiedExecutable);
-
-				if (!isWindows)
-				{
-					File.SetUnixFileMode(copiedExecutable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-				}
-
-				executable = copiedExecutable;
+				File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
 			}
 
 			ProcessStartInfo startInfo = new(executable, arguments)
@@ -618,20 +625,17 @@ public class SingleAppInstanceTests
 
 			Process.Dispose();
 
-			if (temporaryDirectory is not null)
+			try
 			{
-				try
-				{
-					Directory.Delete(temporaryDirectory, recursive: true);
-				}
-				catch (IOException)
-				{
-					// Temporary files are left for the operating system to reclaim
-				}
-				catch (UnauthorizedAccessException)
-				{
-					// Temporary files are left for the operating system to reclaim
-				}
+				Directory.Delete(temporaryDirectory, recursive: true);
+			}
+			catch (IOException)
+			{
+				// Temporary files are left for the operating system to reclaim
+			}
+			catch (UnauthorizedAccessException)
+			{
+				// Temporary files are left for the operating system to reclaim
 			}
 		}
 	}
