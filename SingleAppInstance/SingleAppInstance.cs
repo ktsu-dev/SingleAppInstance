@@ -175,7 +175,7 @@ public static class SingleAppInstance
 	/// </summary>
 	/// <param name="pidFileContents">The raw contents of the PID file.</param>
 	/// <param name="currentPid">The current process ID.</param>
-	/// <returns><c>true</c> if the legacy PID corresponds to a running process; otherwise, <c>false</c>.</returns>
+	/// <returns><c>true</c> if the legacy PID corresponds to a running instance of this application; otherwise, <c>false</c>.</returns>
 	private static bool HandleLegacyPidFile(string pidFileContents, int currentPid)
 	{
 		if (!int.TryParse(pidFileContents, NumberStyles.Integer, CultureInfo.InvariantCulture, out int filePid))
@@ -188,7 +188,7 @@ public static class SingleAppInstance
 			return false;
 		}
 
-		return IsProcessRunning(filePid);
+		return IsLegacyProcessRunning(filePid);
 	}
 
 	/// <summary>
@@ -257,23 +257,46 @@ public static class SingleAppInstance
 	}
 
 	/// <summary>
-	/// Checks if a process with the given PID is currently running.
+	/// Checks if the PID read from a legacy PID file belongs to another running instance of this application.
 	/// </summary>
-	/// <param name="pid">The process ID to check.</param>
-	/// <returns><c>true</c> if a process with the given PID is running; otherwise, <c>false</c>.</returns>
-	private static bool IsProcessRunning(int pid)
+	/// <param name="pid">The process ID read from the legacy PID file.</param>
+	/// <returns><c>true</c> if the PID belongs to a running process with the same name as the current process; otherwise, <c>false</c>.</returns>
+	/// <remarks>
+	/// The legacy format stores nothing but the PID, so a stale file left behind by an abnormal exit
+	/// will match whatever unrelated process the operating system later recycles that PID onto. The
+	/// running process's name is therefore compared against the current process's name before it is
+	/// treated as another instance, mirroring the identity confirmation the JSON format performs.
+	/// When identity cannot be confirmed the PID is treated as stale so the application still launches.
+	/// </remarks>
+	private static bool IsLegacyProcessRunning(int pid)
 	{
-		Process[] processes = Process.GetProcesses();
+		string currentProcessName;
+		using (Process currentProcess = Process.GetCurrentProcess())
+		{
+			currentProcessName = currentProcess.ProcessName;
+		}
+
 		try
 		{
-			return Array.Exists(processes, p => p.Id == pid);
+			using Process runningProcess = Process.GetProcessById(pid);
+
+			return !runningProcess.HasExited &&
+				string.Equals(runningProcess.ProcessName, currentProcessName, StringComparison.Ordinal);
 		}
-		finally
+		catch (ArgumentException)
 		{
-			foreach (Process p in processes)
-			{
-				p.Dispose();
-			}
+			// Process not found - no longer running
+			return false;
+		}
+		catch (InvalidOperationException)
+		{
+			// Process has exited
+			return false;
+		}
+		catch (System.ComponentModel.Win32Exception)
+		{
+			// Access denied to process details - identity cannot be confirmed
+			return false;
 		}
 	}
 

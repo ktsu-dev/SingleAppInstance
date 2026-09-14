@@ -20,7 +20,7 @@
 - **Enhanced Process Identification**: Verifies running instances using multiple attributes (PID, process name, start time, executable path) for accurate detection
 - **Race Condition Handling**: Includes a built-in 1-second delay to safely detect simultaneous startup attempts
 - **PID File Management**: Stores process information as JSON in the application data directory
-- **Backward Compatibility**: Gracefully handles legacy PID files that stored only a plain integer PID
+- **Backward Compatibility**: Gracefully handles legacy PID files that stored only a plain integer PID, confirming the process name before treating a recycled PID as a running instance
 - **Simple API**: Two methods — `ExitIfAlreadyRunning()` for automatic exit and `ShouldLaunch()` for custom logic
 - **Multi-Target Support**: Works across .NET 10.0 through .NET 5.0, .NET Standard 2.0/2.1
 
