@@ -2,8 +2,10 @@
 
 namespace ktsu.SingleAppInstance.Test;
 
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 
 [TestClass]
@@ -140,43 +142,40 @@ public class SingleAppInstanceTests
 	}
 
 	[TestMethod]
-	public void IsAlreadyRunning_WithLegacyPidFile_RunningProcess_ShouldReturnTrue()
+	public void IsAlreadyRunning_WithLegacyPidFile_RunningProcessWithDifferentName_ShouldReturnFalse()
 	{
-		// Arrange - legacy PID file with a PID of a process that IS running
-		// Use a well-known process that should always be running
+		// Arrange - legacy PID file holding the PID of an unrelated running process, which is what a
+		// stale legacy PID file looks like once the operating system has recycled the PID
 		string pidFilePath = SingleAppInstance.PidFilePath;
 		using Process currentProcess = Process.GetCurrentProcess();
-		Process? targetProcess = null;
+		using Process? targetProcess = FindRunningProcessWithDifferentName(currentProcess);
 
-		try
-		{
-			// Find a different running process to use
-			foreach (Process p in Process.GetProcesses())
-			{
-				if (p.Id != currentProcess.Id)
-				{
-					targetProcess = p;
-					break;
-				}
-				else
-				{
-					p.Dispose();
-				}
-			}
+		Assert.IsNotNull(targetProcess, "Should find at least one other running process with a different name");
+		File.WriteAllText(pidFilePath, targetProcess.Id.ToString(CultureInfo.InvariantCulture));
 
-			Assert.IsNotNull(targetProcess, "Should find at least one other running process");
-			File.WriteAllText(pidFilePath, targetProcess.Id.ToString(CultureInfo.InvariantCulture));
+		// Act
+		bool result = SingleAppInstance.IsAlreadyRunning();
 
-			// Act
-			bool result = SingleAppInstance.IsAlreadyRunning();
+		// Assert
+		Assert.IsFalse(result, "Should return false when the recycled PID belongs to a process that is not this application");
+	}
 
-			// Assert
-			Assert.IsTrue(result, "Should return true for a running process in legacy format");
-		}
-		finally
-		{
-			targetProcess?.Dispose();
-		}
+	[TestMethod]
+	public void IsAlreadyRunning_WithLegacyPidFile_RunningProcessWithSameName_ShouldReturnTrue()
+	{
+		// Arrange - legacy PID file holding the PID of a running process that carries this
+		// application's own process name, which is as close to another instance as the legacy
+		// format can describe
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		using HelperProcess helper = StartInstanceLookalikeProcess();
+
+		File.WriteAllText(pidFilePath, helper.Process.Id.ToString(CultureInfo.InvariantCulture));
+
+		// Act
+		bool result = SingleAppInstance.IsAlreadyRunning();
+
+		// Assert
+		Assert.IsTrue(result, "Should return true for a running process that matches this application's name in legacy format");
 	}
 
 	[TestMethod]
@@ -376,42 +375,18 @@ public class SingleAppInstanceTests
 	[TestMethod]
 	public void ShouldLaunch_WhenAlreadyRunning_ShouldReturnFalse()
 	{
-		// Arrange - Write a PID file for a different running process using legacy format
-		// This ensures IsAlreadyRunning() returns true on the first call
+		// Arrange - a running process carrying this application's name, recorded in the legacy
+		// format, is what another instance looks like to IsAlreadyRunning()
 		string pidFilePath = SingleAppInstance.PidFilePath;
-		Process? targetProcess = null;
+		using HelperProcess helper = StartInstanceLookalikeProcess();
 
-		try
-		{
-			// Find a different running process
-			foreach (Process p in Process.GetProcesses())
-			{
-				if (p.Id != Environment.ProcessId)
-				{
-					targetProcess = p;
-					break;
-				}
-				else
-				{
-					p.Dispose();
-				}
-			}
+		File.WriteAllText(pidFilePath, helper.Process.Id.ToString(CultureInfo.InvariantCulture));
 
-			Assert.IsNotNull(targetProcess, "Should find at least one other running process");
+		// Act
+		bool result = SingleAppInstance.ShouldLaunch();
 
-			// Write legacy format PID file so IsAlreadyRunning returns true
-			File.WriteAllText(pidFilePath, targetProcess.Id.ToString(CultureInfo.InvariantCulture));
-
-			// Act
-			bool result = SingleAppInstance.ShouldLaunch();
-
-			// Assert
-			Assert.IsFalse(result, "ShouldLaunch should return false when another instance is detected");
-		}
-		finally
-		{
-			targetProcess?.Dispose();
-		}
+		// Assert
+		Assert.IsFalse(result, "ShouldLaunch should return false when another instance is detected");
 	}
 
 	[TestMethod]
@@ -514,6 +489,155 @@ public class SingleAppInstanceTests
 
 		// Assert
 		Assert.IsFalse(result);
+	}
+
+	/// <summary>
+	/// Finds a running process that is neither the current process nor shares its process name.
+	/// </summary>
+	private static Process? FindRunningProcessWithDifferentName(Process currentProcess)
+	{
+		foreach (Process candidate in Process.GetProcesses())
+		{
+			bool isUsable = false;
+
+			try
+			{
+				// A name that prefixes the current process's name is excluded too, because a
+				// platform that truncates process names reports this application that way
+				isUsable = candidate.Id != currentProcess.Id &&
+					!currentProcess.ProcessName.StartsWith(candidate.ProcessName, StringComparison.Ordinal);
+			}
+			catch (InvalidOperationException)
+			{
+				// Process exited between enumeration and inspection
+			}
+			catch (Win32Exception)
+			{
+				// Process details are not accessible
+			}
+
+			if (isUsable)
+			{
+				return candidate;
+			}
+
+			candidate.Dispose();
+		}
+
+		return null;
+	}
+
+	/// <summary>
+	/// Launches a long-lived process that reports this application's own process name, so it is
+	/// indistinguishable from another instance to a PID file that records nothing but a PID.
+	/// </summary>
+	private static HelperProcess StartInstanceLookalikeProcess()
+	{
+		using Process currentProcess = Process.GetCurrentProcess();
+		string currentProcessName = currentProcess.ProcessName;
+
+		HelperProcess helper = HelperProcess.Start(currentProcessName);
+		string helperProcessName = helper.Process.ProcessName;
+
+		// Some platforms report another process's name truncated, so a prefix of the current
+		// process's name is as close a lookalike as the platform allows
+		bool isLookalike = string.Equals(helperProcessName, currentProcessName, StringComparison.Ordinal) ||
+			(helperProcessName.Length < currentProcessName.Length &&
+				currentProcessName.StartsWith(helperProcessName, StringComparison.Ordinal));
+
+		if (!isLookalike)
+		{
+			helper.Dispose();
+			Assert.Inconclusive($"Could not launch a helper process named '{currentProcessName}' on this platform; it reported '{helperProcessName}'");
+		}
+
+		return helper;
+	}
+
+	/// <summary>
+	/// A long-lived child process used to stand in for another instance of the application.
+	/// </summary>
+	/// <remarks>
+	/// A long-running system executable is copied to a temporary file named after the requested
+	/// process name, so the child reports that process name to the operating system.
+	/// </remarks>
+	private sealed class HelperProcess : IDisposable
+	{
+		private readonly string temporaryDirectory;
+
+		public Process Process { get; }
+
+		private HelperProcess(Process process, string temporaryDirectory)
+		{
+			Process = process;
+			this.temporaryDirectory = temporaryDirectory;
+		}
+
+		public static HelperProcess Start(string processName)
+		{
+			bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+			string systemExecutable = isWindows
+				? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "ping.exe")
+				: "/bin/sleep";
+			string arguments = isWindows ? "-n 120 127.0.0.1" : "120";
+
+			string temporaryDirectory = Path.Combine(Path.GetTempPath(), $"{nameof(SingleAppInstanceTests)}_{Guid.NewGuid():N}");
+			Directory.CreateDirectory(temporaryDirectory);
+
+			string executable = Path.Combine(temporaryDirectory, isWindows ? $"{processName}.exe" : processName);
+			File.Copy(systemExecutable, executable);
+
+			if (!isWindows)
+			{
+				File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+			}
+
+			ProcessStartInfo startInfo = new(executable, arguments)
+			{
+				UseShellExecute = false,
+				CreateNoWindow = true,
+			};
+
+			Process? process = Process.Start(startInfo);
+			Assert.IsNotNull(process, "Should be able to start a helper process");
+
+			return new HelperProcess(process, temporaryDirectory);
+		}
+
+		public void Dispose()
+		{
+			try
+			{
+				if (!Process.HasExited)
+				{
+					Process.Kill();
+					Process.WaitForExit(5000);
+				}
+			}
+			catch (InvalidOperationException)
+			{
+				// Process already exited
+			}
+			catch (Win32Exception)
+			{
+				// Process could not be signalled
+			}
+
+			Process.Dispose();
+
+			try
+			{
+				Directory.Delete(temporaryDirectory, recursive: true);
+			}
+			catch (IOException)
+			{
+				// Temporary files are left for the operating system to reclaim
+			}
+			catch (UnauthorizedAccessException)
+			{
+				// Temporary files are left for the operating system to reclaim
+			}
+		}
 	}
 
 	// This class needs to mirror the internal ProcessInfo class for testing
