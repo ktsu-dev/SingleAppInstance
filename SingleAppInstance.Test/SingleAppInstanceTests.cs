@@ -148,23 +148,16 @@ public class SingleAppInstanceTests
 		// stale legacy PID file looks like once the operating system has recycled the PID
 		string pidFilePath = SingleAppInstance.PidFilePath;
 		using Process currentProcess = Process.GetCurrentProcess();
-		Process? targetProcess = FindRunningProcessWithDifferentName(currentProcess);
+		using Process? targetProcess = FindRunningProcessWithDifferentName(currentProcess);
 
-		try
-		{
-			Assert.IsNotNull(targetProcess, "Should find at least one other running process with a different name");
-			File.WriteAllText(pidFilePath, targetProcess.Id.ToString(CultureInfo.InvariantCulture));
+		Assert.IsNotNull(targetProcess, "Should find at least one other running process with a different name");
+		File.WriteAllText(pidFilePath, targetProcess.Id.ToString(CultureInfo.InvariantCulture));
 
-			// Act
-			bool result = SingleAppInstance.IsAlreadyRunning();
+		// Act
+		bool result = SingleAppInstance.IsAlreadyRunning();
 
-			// Assert
-			Assert.IsFalse(result, "Should return false when the recycled PID belongs to a process that is not this application");
-		}
-		finally
-		{
-			targetProcess?.Dispose();
-		}
+		// Assert
+		Assert.IsFalse(result, "Should return false when the recycled PID belongs to a process that is not this application");
 	}
 
 	[TestMethod]
