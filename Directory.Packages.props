@@ -3,7 +3,7 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
-    <PackageVersion Include="ktsu.AppDataStorage" Version="1.17.6" />
+    <PackageVersion Include="ktsu.AppDataStorage" Version="1.17.7" />
     <PackageVersion Include="ktsu.Semantics.Paths" Version="5.5.1" />
     <PackageVersion Include="Polyfill" Version="11.4.0" />
     <PackageVersion Include="System.Memory" Version="4.6.3" />
