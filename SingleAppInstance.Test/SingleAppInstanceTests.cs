@@ -777,7 +777,38 @@ public class SingleAppInstanceTests
 			Process? process = Process.Start(startInfo);
 			Assert.IsNotNull(process, "Should be able to start a helper process");
 
-			return new HelperProcess(process, temporaryDirectory);
+			HelperProcess helper = new(process, temporaryDirectory);
+			helper.WaitForMainModule();
+			return helper;
+		}
+
+		/// <summary>
+		/// Waits until the helper's main module can be read, since Windows reports none until the
+		/// loader has finished starting the process, and a test that records it too early would
+		/// describe a different process from the one IsAlreadyRunning later inspects.
+		/// </summary>
+		private void WaitForMainModule()
+		{
+			Stopwatch stopwatch = Stopwatch.StartNew();
+			while (stopwatch.Elapsed < TimeSpan.FromSeconds(10))
+			{
+				Process.Refresh();
+				try
+				{
+					if (Process.MainModule?.FileName is not null)
+					{
+						return;
+					}
+				}
+				catch (Win32Exception)
+				{
+					// The module list is not readable yet
+				}
+
+				Thread.Sleep(50);
+			}
+
+			Assert.Inconclusive("The helper process's main module never became readable");
 		}
 
 		public void Dispose()
