@@ -12,12 +12,19 @@ using System.Text.Json;
 [DoNotParallelize]
 public class SingleAppInstanceTests
 {
+	public TestContext TestContext { get; set; } = null!;
+
 	[TestInitialize]
 	public void TestInitialize()
 	{
 		// Ensure the PID directory exists and the file is deleted before each test
 		string pidFilePath = SingleAppInstance.PidFilePath;
 		Directory.CreateDirectory(SingleAppInstance.PidDirectoryPath);
+		if (Directory.Exists(pidFilePath))
+		{
+			Directory.Delete(pidFilePath, recursive: true);
+		}
+
 		File.Delete(pidFilePath);
 	}
 
@@ -482,6 +489,235 @@ public class SingleAppInstanceTests
 
 		// Assert
 		Assert.IsFalse(result, "ShouldLaunch should return false when another instance is detected");
+	}
+
+	[TestMethod]
+	public void IsAlreadyRunning_WithGarbageSuffixedPidFileForRunningInstance_ShouldReturnTrue()
+	{
+		// Arrange - two writers racing leave the shorter record followed by the tail of the longer
+		// one, and the record still describes the live instance that wrote it
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		using HelperProcess helper = HelperProcess.Start("TornPidHelper");
+
+		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(DescribeProcess(helper.Process)) + "0\"}");
+
+		// Act
+		bool result = SingleAppInstance.IsAlreadyRunning();
+
+		// Assert
+		Assert.IsTrue(result, "A torn PID file whose leading record describes a running instance should read as that instance");
+	}
+
+	[TestMethod]
+	public void ShouldLaunch_WithGarbageSuffixedPidFileForRunningInstance_ShouldReturnFalse()
+	{
+		// Arrange
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		using HelperProcess helper = HelperProcess.Start("TornPidHelper");
+
+		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(DescribeProcess(helper.Process)) + "0\"}");
+
+		// Act
+		bool result = SingleAppInstance.ShouldLaunch();
+
+		// Assert
+		Assert.IsFalse(result, "A torn PID file must not let a second instance launch while the first is running");
+	}
+
+	[TestMethod]
+	public void ShouldLaunch_WhenPidFileBecomesUnreadableDuringRaceWindow_ShouldReturnFalse()
+	{
+		// Arrange - once this instance has written its PID file, a racing instance leaves content
+		// that cannot be parsed, which must count as that instance rather than as no instance
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		string ownPid = Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
+
+		Task racingWriter = Task.Run(async () =>
+		{
+			Stopwatch stopwatch = Stopwatch.StartNew();
+			while (stopwatch.Elapsed < TimeSpan.FromSeconds(10))
+			{
+				try
+				{
+					string content = await File.ReadAllTextAsync(pidFilePath, TestContext.CancellationToken).ConfigureAwait(false);
+					if (content.Contains(ownPid, StringComparison.Ordinal))
+					{
+						await File.WriteAllTextAsync(pidFilePath, "{\"ProcessId\":12", TestContext.CancellationToken).ConfigureAwait(false);
+						return;
+					}
+				}
+				catch (IOException)
+				{
+					// Not written yet, or being replaced
+				}
+				catch (UnauthorizedAccessException)
+				{
+					// Being replaced
+				}
+
+				await Task.Delay(10, TestContext.CancellationToken).ConfigureAwait(false);
+			}
+		}, TestContext.CancellationToken);
+
+		// Act
+		bool result = SingleAppInstance.ShouldLaunch();
+		racingWriter.Wait(TestContext.CancellationToken);
+
+		// Assert
+		Assert.IsFalse(result, "Unparseable content after this instance wrote its PID file should not grant a launch");
+	}
+
+	[TestMethod]
+	public void ShouldLaunch_WhenPidFileIsHeldExclusively_ShouldReturnFalseWithoutThrowing()
+	{
+		// Arrange - another instance holding the PID file open is what a simultaneous launch looks like
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		using FileStream heldPidFile = new(pidFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+
+		// Act
+		bool result = SingleAppInstance.ShouldLaunch();
+
+		// Assert
+		Assert.IsFalse(result, "A PID file held by another instance should read as that instance starting");
+	}
+
+	[TestMethod]
+	public void WritePidFile_WhileBeingRead_ReaderNeverSeesAPartialFile()
+	{
+		// Arrange - a reader racing a writer must only ever see a whole PID file
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		SingleAppInstance.WritePidFile();
+
+		using CancellationTokenSource writing = new();
+		Task writer = Task.Run(() =>
+		{
+			while (!writing.IsCancellationRequested)
+			{
+				try
+				{
+					SingleAppInstance.WritePidFile();
+				}
+				catch (IOException)
+				{
+					// The reader held the file for every retry; contention is expected here
+				}
+				catch (UnauthorizedAccessException)
+				{
+					// The reader held the file for every retry; contention is expected here
+				}
+			}
+		}, TestContext.CancellationToken);
+
+		int partialReads = 0;
+		string? lastPartialContent = null;
+
+		// Act
+		try
+		{
+			for (int i = 0; i < 2000; i++)
+			{
+				string content;
+				try
+				{
+					content = File.ReadAllText(pidFilePath);
+				}
+				catch (IOException)
+				{
+					// The file was being replaced; a sharing violation is not a partial read
+					continue;
+				}
+				catch (UnauthorizedAccessException)
+				{
+					// The file was being replaced; a pending delete is not a partial read
+					continue;
+				}
+
+				try
+				{
+					if (JsonSerializer.Deserialize<ProcessInfo>(content) is null)
+					{
+						partialReads++;
+						lastPartialContent = content;
+					}
+				}
+				catch (JsonException)
+				{
+					partialReads++;
+					lastPartialContent = content;
+				}
+			}
+		}
+		finally
+		{
+			writing.Cancel();
+			writer.Wait(TestContext.CancellationToken);
+		}
+
+		// Assert
+		Assert.AreEqual(0, partialReads, $"Every read should see a whole PID file; last partial content was '{lastPartialContent}'");
+	}
+
+	[TestMethod]
+	public void WritePidFile_WhenPidFileCannotBeReplaced_ShouldThrowAndRemoveTemporaryFile()
+	{
+		// Arrange - a directory where the PID file belongs can never be replaced by a file
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		Directory.CreateDirectory(pidFilePath);
+		bool threw = false;
+
+		// Act
+		try
+		{
+			SingleAppInstance.WritePidFile();
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			threw = true;
+		}
+		finally
+		{
+			Directory.Delete(pidFilePath, recursive: true);
+		}
+
+		// Assert
+		Assert.IsTrue(threw, "WritePidFile should throw once every attempt to replace the PID file has failed");
+		string[] temporaryFiles = Directory.GetFiles(SingleAppInstance.PidDirectoryPath, Path.GetFileName(pidFilePath) + ".*.tmp");
+		Assert.IsEmpty(temporaryFiles, "The temporary file should be removed when the PID file cannot be replaced");
+	}
+
+	[TestMethod]
+	public void TryWritePidFile_WhenPidFileCannotBeReplaced_ShouldReturnFalse()
+	{
+		// Arrange
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		Directory.CreateDirectory(pidFilePath);
+
+		// Act
+		bool result;
+		try
+		{
+			result = SingleAppInstance.TryWritePidFile();
+		}
+		finally
+		{
+			Directory.Delete(pidFilePath, recursive: true);
+		}
+
+		// Assert
+		Assert.IsFalse(result, "TryWritePidFile should report that this instance could not claim the PID file");
+	}
+
+	[TestMethod]
+	public void TryWritePidFile_WhenPidFileCanBeWritten_ShouldReturnTrue()
+	{
+		// Act
+		bool result = SingleAppInstance.TryWritePidFile();
+
+		// Assert
+		Assert.IsTrue(result);
+		ProcessInfo? processInfo = JsonSerializer.Deserialize<ProcessInfo>(File.ReadAllText(SingleAppInstance.PidFilePath));
+		Assert.IsNotNull(processInfo);
+		Assert.AreEqual(Environment.ProcessId, processInfo.ProcessId);
 	}
 
 	[TestMethod]
