@@ -390,6 +390,171 @@ public class SingleAppInstanceTests
 	}
 
 	[TestMethod]
+	public void IsAlreadyRunning_WithGarbageSuffixedPidFileForRunningInstance_ShouldReturnTrue()
+	{
+		// Arrange - two writers racing leave the shorter record followed by the tail of the longer
+		// one, and the record still describes the live instance that wrote it
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		using HelperProcess helper = HelperProcess.Start("TornPidHelper");
+
+		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(DescribeProcess(helper.Process)) + "0\"}");
+
+		// Act
+		bool result = SingleAppInstance.IsAlreadyRunning();
+
+		// Assert
+		Assert.IsTrue(result, "A torn PID file whose leading record describes a running instance should read as that instance");
+	}
+
+	[TestMethod]
+	public void ShouldLaunch_WithGarbageSuffixedPidFileForRunningInstance_ShouldReturnFalse()
+	{
+		// Arrange
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		using HelperProcess helper = HelperProcess.Start("TornPidHelper");
+
+		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(DescribeProcess(helper.Process)) + "0\"}");
+
+		// Act
+		bool result = SingleAppInstance.ShouldLaunch();
+
+		// Assert
+		Assert.IsFalse(result, "A torn PID file must not let a second instance launch while the first is running");
+	}
+
+	[TestMethod]
+	public void ShouldLaunch_WhenPidFileBecomesUnreadableDuringRaceWindow_ShouldReturnFalse()
+	{
+		// Arrange - once this instance has written its PID file, a racing instance leaves content
+		// that cannot be parsed, which must count as that instance rather than as no instance
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		string ownPid = Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
+
+		Task racingWriter = Task.Run(() =>
+		{
+			Stopwatch stopwatch = Stopwatch.StartNew();
+			while (stopwatch.Elapsed < TimeSpan.FromSeconds(10))
+			{
+				try
+				{
+					if (File.ReadAllText(pidFilePath).Contains(ownPid, StringComparison.Ordinal))
+					{
+						File.WriteAllText(pidFilePath, "{\"ProcessId\":12");
+						return;
+					}
+				}
+				catch (IOException)
+				{
+					// Not written yet, or being replaced
+				}
+				catch (UnauthorizedAccessException)
+				{
+					// Being replaced
+				}
+
+				Thread.Sleep(10);
+			}
+		});
+
+		// Act
+		bool result = SingleAppInstance.ShouldLaunch();
+		racingWriter.Wait();
+
+		// Assert
+		Assert.IsFalse(result, "Unparseable content after this instance wrote its PID file should not grant a launch");
+	}
+
+	[TestMethod]
+	public void ShouldLaunch_WhenPidFileIsHeldExclusively_ShouldReturnFalseWithoutThrowing()
+	{
+		// Arrange - another instance holding the PID file open is what a simultaneous launch looks like
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		using FileStream heldPidFile = new(pidFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+
+		// Act
+		bool result = SingleAppInstance.ShouldLaunch();
+
+		// Assert
+		Assert.IsFalse(result, "A PID file held by another instance should read as that instance starting");
+	}
+
+	[TestMethod]
+	public void WritePidFile_WhileBeingRead_ReaderNeverSeesAPartialFile()
+	{
+		// Arrange - a reader racing a writer must only ever see a whole PID file
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		SingleAppInstance.WritePidFile();
+
+		using CancellationTokenSource writing = new();
+		Task writer = Task.Run(() =>
+		{
+			while (!writing.IsCancellationRequested)
+			{
+				try
+				{
+					SingleAppInstance.WritePidFile();
+				}
+				catch (IOException)
+				{
+					// The reader held the file for every retry; contention is expected here
+				}
+				catch (UnauthorizedAccessException)
+				{
+					// The reader held the file for every retry; contention is expected here
+				}
+			}
+		});
+
+		int partialReads = 0;
+		string? lastPartialContent = null;
+
+		// Act
+		try
+		{
+			for (int i = 0; i < 2000; i++)
+			{
+				string content;
+				try
+				{
+					content = File.ReadAllText(pidFilePath);
+				}
+				catch (IOException)
+				{
+					// The file was being replaced; a sharing violation is not a partial read
+					continue;
+				}
+				catch (UnauthorizedAccessException)
+				{
+					// The file was being replaced; a pending delete is not a partial read
+					continue;
+				}
+
+				try
+				{
+					if (JsonSerializer.Deserialize<ProcessInfo>(content) is null)
+					{
+						partialReads++;
+						lastPartialContent = content;
+					}
+				}
+				catch (JsonException)
+				{
+					partialReads++;
+					lastPartialContent = content;
+				}
+			}
+		}
+		finally
+		{
+			writing.Cancel();
+			writer.Wait();
+		}
+
+		// Assert
+		Assert.AreEqual(0, partialReads, $"Every read should see a whole PID file; last partial content was '{lastPartialContent}'");
+	}
+
+	[TestMethod]
 	public void PidDirectoryPath_ShouldNotBeEmpty()
 	{
 		// Act
@@ -490,6 +655,17 @@ public class SingleAppInstanceTests
 		// Assert
 		Assert.IsFalse(result);
 	}
+
+	/// <summary>
+	/// Describes a running process the way <see cref="SingleAppInstance.WritePidFile"/> records one.
+	/// </summary>
+	private static ProcessInfo DescribeProcess(Process process) => new()
+	{
+		ProcessId = process.Id,
+		ProcessName = process.ProcessName,
+		StartTime = process.StartTime,
+		MainModuleFileName = process.MainModule?.FileName,
+	};
 
 	/// <summary>
 	/// Finds a running process that is neither the current process nor shares its process name.

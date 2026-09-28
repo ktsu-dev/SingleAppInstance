@@ -4,6 +4,7 @@ namespace ktsu.SingleAppInstance;
 
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 
 using ktsu.AppDataStorage;
@@ -44,6 +45,8 @@ public static class SingleAppInstance
 	/// If no other instance is running, it writes the current process ID to a PID file
 	/// and waits for a short period to handle potential race conditions. It then checks
 	/// again to ensure no other instance started during the wait period.
+	/// If the PID file stays locked by another process, or cannot be written, another instance
+	/// is taken to be starting and this method returns <c>false</c> rather than throwing.
 	/// </remarks>
 	public static bool ShouldLaunch()
 	{
@@ -55,13 +58,60 @@ public static class SingleAppInstance
 
 		// if no other instance is running, write our pid to the pid file and wait to see
 		// if another instance was attempting to start at the same time
-		WritePidFile();
+		try
+		{
+			WritePidFile();
+		}
+		catch (IOException)
+		{
+			// Another instance kept the PID file busy for the whole retry window
+			return false;
+		}
+		catch (UnauthorizedAccessException)
+		{
+			// The PID file cannot be replaced, so this instance cannot claim it
+			return false;
+		}
+
 		Thread.Sleep(1000);
 
 		// in case there was a race and another instance is starting at the same time we
-		// need to check again to see if we won the lock
-		return !IsAlreadyRunning();
+		// need to check again to see if we won the lock. We just wrote a whole PID file, so
+		// content that cannot be read now was written by an instance racing us, and it counts
+		// as that instance rather than as no instance at all
+		return ReadPidFileState() == PidFileState.NoInstance;
 	}
+
+	/// <summary>
+	/// What the PID file says about other instances of the application.
+	/// </summary>
+	internal enum PidFileState
+	{
+		/// <summary>
+		/// No other instance is running.
+		/// </summary>
+		NoInstance,
+
+		/// <summary>
+		/// Another instance is running, or is holding the PID file while it starts.
+		/// </summary>
+		AnotherInstance,
+
+		/// <summary>
+		/// The PID file exists but its contents cannot be understood.
+		/// </summary>
+		Unreadable,
+	}
+
+	/// <summary>
+	/// How many times the PID file is read or replaced before contention is taken to be another instance.
+	/// </summary>
+	private const int PidFileAttempts = 5;
+
+	/// <summary>
+	/// How long to wait before each retry, multiplied by the number of attempts made so far.
+	/// </summary>
+	private static readonly TimeSpan PidFileRetryDelay = TimeSpan.FromMilliseconds(20);
 
 	/// <summary>
 	/// Represents process information stored in the PID file.
@@ -99,29 +149,51 @@ public static class SingleAppInstance
 	/// This method reads the PID file to get the process information of the running instance.
 	/// It then checks if the process with that ID is still running and verifies it's the same application.
 	/// </remarks>
-	internal static bool IsAlreadyRunning()
+	internal static bool IsAlreadyRunning() => ReadPidFileState() == PidFileState.AnotherInstance;
+
+	/// <summary>
+	/// Reads the PID file and determines whether it describes another running instance.
+	/// </summary>
+	/// <returns>What the PID file says about other instances of the application.</returns>
+	/// <remarks>
+	/// Another instance may be writing the PID file at the same moment, which on some platforms
+	/// makes the read fail with a sharing violation. The read is retried briefly, and if the file
+	/// stays inaccessible it is treated as another instance that is starting.
+	/// </remarks>
+	internal static PidFileState ReadPidFileState()
 	{
 		int currentPid = GetCurrentProcessId();
 
-		try
+		for (int attempt = 1; attempt <= PidFileAttempts; attempt++)
 		{
-			string pidFileContents = File.ReadAllText(PidFilePath);
-			return CheckPidFileContents(pidFileContents, currentPid);
-		}
-		catch (DirectoryNotFoundException)
-		{
-			// PID directory doesn't exist yet - no instance running
-		}
-		catch (FileNotFoundException)
-		{
-			// PID file doesn't exist - no instance running
-		}
-		catch (FormatException)
-		{
-			// PID file content is corrupted - treat as no instance running
+			try
+			{
+				string pidFileContents = File.ReadAllText(PidFilePath);
+				return CheckPidFileContents(pidFileContents, currentPid);
+			}
+			catch (DirectoryNotFoundException)
+			{
+				// PID directory doesn't exist yet - no instance running
+				return PidFileState.NoInstance;
+			}
+			catch (FileNotFoundException)
+			{
+				// PID file doesn't exist - no instance running
+				return PidFileState.NoInstance;
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				// Another instance is writing or holding the PID file
+			}
+
+			if (attempt < PidFileAttempts)
+			{
+				Thread.Sleep(TimeSpan.FromTicks(PidFileRetryDelay.Ticks * attempt));
+			}
 		}
 
-		return false;
+		// The PID file stayed inaccessible, so another instance is holding it while it starts
+		return PidFileState.AnotherInstance;
 	}
 
 	/// <summary>
@@ -145,16 +217,22 @@ public static class SingleAppInstance
 	/// </summary>
 	/// <param name="pidFileContents">The raw contents of the PID file.</param>
 	/// <param name="currentPid">The current process ID.</param>
-	/// <returns><c>true</c> if a different instance of the application is running; otherwise, <c>false</c>.</returns>
-	private static bool CheckPidFileContents(string pidFileContents, int currentPid)
+	/// <returns>What the contents say about other instances of the application.</returns>
+	/// <remarks>
+	/// Only the first JSON value in the file is read. A PID file torn by two older writers racing
+	/// holds a complete record followed by the tail of a longer one, and that record still names the
+	/// instance that wrote it.
+	/// </remarks>
+	private static PidFileState CheckPidFileContents(string pidFileContents, int currentPid)
 	{
 		ProcessInfo? storedProcess;
 		try
 		{
-			storedProcess = JsonSerializer.Deserialize<ProcessInfo>(pidFileContents);
+			Utf8JsonReader reader = new(Encoding.UTF8.GetBytes(pidFileContents));
+			storedProcess = JsonSerializer.Deserialize<ProcessInfo>(ref reader);
 			if (storedProcess == null)
 			{
-				return false;
+				return PidFileState.NoInstance;
 			}
 		}
 		catch (JsonException)
@@ -164,31 +242,38 @@ public static class SingleAppInstance
 
 		if (storedProcess.ProcessId == currentPid)
 		{
-			return false;
+			return PidFileState.NoInstance;
 		}
 
-		return IsStoredProcessRunning(storedProcess);
+		return ToState(IsStoredProcessRunning(storedProcess));
 	}
+
+	/// <summary>
+	/// Converts the outcome of a process check into a PID file state.
+	/// </summary>
+	/// <param name="isRunning">Whether another instance was found running.</param>
+	/// <returns>The corresponding PID file state.</returns>
+	private static PidFileState ToState(bool isRunning) => isRunning ? PidFileState.AnotherInstance : PidFileState.NoInstance;
 
 	/// <summary>
 	/// Handles backward-compatible legacy PID files that contain only a plain integer PID.
 	/// </summary>
 	/// <param name="pidFileContents">The raw contents of the PID file.</param>
 	/// <param name="currentPid">The current process ID.</param>
-	/// <returns><c>true</c> if the legacy PID corresponds to a running instance of this application; otherwise, <c>false</c>.</returns>
-	private static bool HandleLegacyPidFile(string pidFileContents, int currentPid)
+	/// <returns>What the legacy PID says about other instances of the application.</returns>
+	private static PidFileState HandleLegacyPidFile(string pidFileContents, int currentPid)
 	{
 		if (!int.TryParse(pidFileContents, NumberStyles.Integer, CultureInfo.InvariantCulture, out int filePid))
 		{
-			return false;
+			return PidFileState.Unreadable;
 		}
 
 		if (filePid == currentPid)
 		{
-			return false;
+			return PidFileState.NoInstance;
 		}
 
-		return IsLegacyProcessRunning(filePid);
+		return ToState(IsLegacyProcessRunning(filePid));
 	}
 
 	/// <summary>
@@ -333,7 +418,12 @@ public static class SingleAppInstance
 	/// </summary>
 	/// <remarks>
 	/// This method writes the current process information to the PID file in the application data path.
+	/// The record is written to a temporary file beside the PID file and then moved over it, so a reader
+	/// sees either the previous PID file or the new one and never a partial or interleaved write.
+	/// Replacing the file is retried briefly while another instance holds it.
 	/// </remarks>
+	/// <exception cref="IOException">The PID file stayed in use for every attempt.</exception>
+	/// <exception cref="UnauthorizedAccessException">The PID file could not be replaced.</exception>
 	internal static void WritePidFile()
 	{
 		Directory.CreateDirectory(PidDirectoryPath);
@@ -348,6 +438,56 @@ public static class SingleAppInstance
 		};
 
 		string json = JsonSerializer.Serialize(processInfo);
-		File.WriteAllText(PidFilePath, json);
+		string pidFilePath = PidFilePath;
+		string temporaryPath = $"{pidFilePath}.{Guid.NewGuid():N}.tmp";
+
+		try
+		{
+			File.WriteAllText(temporaryPath, json);
+
+			for (int attempt = 1; ; attempt++)
+			{
+				try
+				{
+					ReplacePidFile(temporaryPath, pidFilePath);
+					return;
+				}
+				catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < PidFileAttempts)
+				{
+					// Another instance is reading or replacing the PID file
+				}
+
+				Thread.Sleep(TimeSpan.FromTicks(PidFileRetryDelay.Ticks * attempt));
+			}
+		}
+		finally
+		{
+			if (File.Exists(temporaryPath))
+			{
+				File.Delete(temporaryPath);
+			}
+		}
 	}
+
+	/// <summary>
+	/// Moves a fully written temporary file over the PID file in a single operation.
+	/// </summary>
+	/// <param name="temporaryPath">The fully written temporary file.</param>
+	/// <param name="pidFilePath">The PID file to create or replace.</param>
+#if NETCOREAPP3_0_OR_GREATER
+	private static void ReplacePidFile(string temporaryPath, string pidFilePath) =>
+		File.Move(temporaryPath, pidFilePath, overwrite: true);
+#else
+	private static void ReplacePidFile(string temporaryPath, string pidFilePath)
+	{
+		if (File.Exists(pidFilePath))
+		{
+			File.Replace(temporaryPath, pidFilePath, destinationBackupFileName: null);
+		}
+		else
+		{
+			File.Move(temporaryPath, pidFilePath);
+		}
+	}
+#endif
 }
