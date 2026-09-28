@@ -238,8 +238,7 @@ public static class SingleAppInstance
 			using Process process = Process.GetProcessById(storedProcess.ProcessId);
 
 			return !process.HasExited &&
-				string.Equals(process.ProcessName, storedProcess.ProcessName, StringComparison.Ordinal) &&
-				HasStoredStartTime(process, storedProcess);
+				string.Equals(process.ProcessName, storedProcess.ProcessName, StringComparison.Ordinal) && HasStoredStartTime(process, storedProcess);
 		}
 		catch (ArgumentException)
 		{
@@ -276,26 +275,30 @@ public static class SingleAppInstance
 	/// as another instance. The start time tells them apart. PID files written before the start time was
 	/// recorded, and processes whose start time cannot be read, keep the name and module check alone.
 	/// </remarks>
-	private static bool HasStoredStartTime(Process runningProcess, ProcessInfo storedProcess)
+	private static bool HasStoredStartTime(Process runningProcess, ProcessInfo storedProcess) =>
+		HasStoredStartTime(() => runningProcess.StartTime, storedProcess.StartTime);
+
+	/// <summary>
+	/// Checks whether a running process's start time matches the stored one.
+	/// </summary>
+	/// <param name="readRunningStartTime">Reads the running process's start time.</param>
+	/// <param name="storedStartTime">The start time read from the PID file.</param>
+	/// <returns><c>true</c> if the start times match or cannot be compared; otherwise, <c>false</c>.</returns>
+	internal static bool HasStoredStartTime(Func<DateTime> readRunningStartTime, DateTime storedStartTime)
 	{
-		if (storedProcess.StartTime == default)
+		if (storedStartTime == default)
 		{
 			return true;
 		}
 
 		try
 		{
-			TimeSpan difference = runningProcess.StartTime.ToUniversalTime() - storedProcess.StartTime.ToUniversalTime();
+			TimeSpan difference = readRunningStartTime().ToUniversalTime() - storedStartTime.ToUniversalTime();
 			return difference.Duration() <= StartTimeTolerance;
 		}
-		catch (InvalidOperationException)
+		catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
 		{
-			// Start time is not available for this process
-			return true;
-		}
-		catch (System.ComponentModel.Win32Exception)
-		{
-			// Access denied to the start time
+			// The start time is unavailable or access to it is denied
 			return true;
 		}
 	}

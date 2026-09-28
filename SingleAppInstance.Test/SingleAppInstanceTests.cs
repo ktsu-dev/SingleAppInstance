@@ -346,6 +346,47 @@ public class SingleAppInstanceTests
 	}
 
 	[TestMethod]
+	public void HasStoredStartTime_WithinTolerance_ShouldReturnTrue()
+	{
+		DateTime stored = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+
+		Assert.IsTrue(SingleAppInstance.HasStoredStartTime(() => stored.AddMilliseconds(900), stored));
+		Assert.IsTrue(SingleAppInstance.HasStoredStartTime(() => stored.AddMilliseconds(-900), stored));
+	}
+
+	[TestMethod]
+	public void HasStoredStartTime_BeyondTolerance_ShouldReturnFalse()
+	{
+		DateTime stored = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+
+		Assert.IsFalse(SingleAppInstance.HasStoredStartTime(() => stored.AddSeconds(2), stored));
+		Assert.IsFalse(SingleAppInstance.HasStoredStartTime(() => stored.AddSeconds(-2), stored));
+	}
+
+	[TestMethod]
+	public void HasStoredStartTime_ComparesLocalAndUniversalTimesAsTheSameInstant()
+	{
+		DateTime stored = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+
+		Assert.IsTrue(SingleAppInstance.HasStoredStartTime(stored.ToLocalTime, stored));
+	}
+
+	[TestMethod]
+	public void HasStoredStartTime_WithNoStoredStartTime_ShouldNotReadTheRunningStartTime()
+	{
+		Assert.IsTrue(SingleAppInstance.HasStoredStartTime(() => throw new AssertFailedException("The running start time should not be read"), default));
+	}
+
+	[TestMethod]
+	public void HasStoredStartTime_WhenRunningStartTimeIsUnavailable_ShouldReturnTrue()
+	{
+		DateTime stored = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+
+		Assert.IsTrue(SingleAppInstance.HasStoredStartTime(() => throw new InvalidOperationException(), stored));
+		Assert.IsTrue(SingleAppInstance.HasStoredStartTime(() => throw new Win32Exception(), stored));
+	}
+
+	[TestMethod]
 	public void IsAlreadyRunning_WithHighNonExistentPid_ShouldReturnFalse()
 	{
 		// Arrange - JSON PID file with a very high PID that shouldn't exist
