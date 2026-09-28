@@ -18,6 +18,11 @@ public class SingleAppInstanceTests
 		// Ensure the PID directory exists and the file is deleted before each test
 		string pidFilePath = SingleAppInstance.PidFilePath;
 		Directory.CreateDirectory(SingleAppInstance.PidDirectoryPath);
+		if (Directory.Exists(pidFilePath))
+		{
+			Directory.Delete(pidFilePath, recursive: true);
+		}
+
 		File.Delete(pidFilePath);
 	}
 
@@ -552,6 +557,69 @@ public class SingleAppInstanceTests
 
 		// Assert
 		Assert.AreEqual(0, partialReads, $"Every read should see a whole PID file; last partial content was '{lastPartialContent}'");
+	}
+
+	[TestMethod]
+	public void WritePidFile_WhenPidFileCannotBeReplaced_ShouldThrowAndRemoveTemporaryFile()
+	{
+		// Arrange - a directory where the PID file belongs can never be replaced by a file
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		Directory.CreateDirectory(pidFilePath);
+		bool threw = false;
+
+		// Act
+		try
+		{
+			SingleAppInstance.WritePidFile();
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			threw = true;
+		}
+		finally
+		{
+			Directory.Delete(pidFilePath, recursive: true);
+		}
+
+		// Assert
+		Assert.IsTrue(threw, "WritePidFile should throw once every attempt to replace the PID file has failed");
+		string[] temporaryFiles = Directory.GetFiles(SingleAppInstance.PidDirectoryPath, Path.GetFileName(pidFilePath) + ".*.tmp");
+		Assert.IsEmpty(temporaryFiles, "The temporary file should be removed when the PID file cannot be replaced");
+	}
+
+	[TestMethod]
+	public void TryWritePidFile_WhenPidFileCannotBeReplaced_ShouldReturnFalse()
+	{
+		// Arrange
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		Directory.CreateDirectory(pidFilePath);
+
+		// Act
+		bool result;
+		try
+		{
+			result = SingleAppInstance.TryWritePidFile();
+		}
+		finally
+		{
+			Directory.Delete(pidFilePath, recursive: true);
+		}
+
+		// Assert
+		Assert.IsFalse(result, "TryWritePidFile should report that this instance could not claim the PID file");
+	}
+
+	[TestMethod]
+	public void TryWritePidFile_WhenPidFileCanBeWritten_ShouldReturnTrue()
+	{
+		// Act
+		bool result = SingleAppInstance.TryWritePidFile();
+
+		// Assert
+		Assert.IsTrue(result);
+		ProcessInfo? processInfo = JsonSerializer.Deserialize<ProcessInfo>(File.ReadAllText(SingleAppInstance.PidFilePath));
+		Assert.IsNotNull(processInfo);
+		Assert.AreEqual(Environment.ProcessId, processInfo.ProcessId);
 	}
 
 	[TestMethod]

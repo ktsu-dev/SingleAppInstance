@@ -58,18 +58,8 @@ public static class SingleAppInstance
 
 		// if no other instance is running, write our pid to the pid file and wait to see
 		// if another instance was attempting to start at the same time
-		try
+		if (!TryWritePidFile())
 		{
-			WritePidFile();
-		}
-		catch (IOException)
-		{
-			// Another instance kept the PID file busy for the whole retry window
-			return false;
-		}
-		catch (UnauthorizedAccessException)
-		{
-			// The PID file cannot be replaced, so this instance cannot claim it
 			return false;
 		}
 
@@ -171,14 +161,9 @@ public static class SingleAppInstance
 				string pidFileContents = File.ReadAllText(PidFilePath);
 				return CheckPidFileContents(pidFileContents, currentPid);
 			}
-			catch (DirectoryNotFoundException)
+			catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
 			{
-				// PID directory doesn't exist yet - no instance running
-				return PidFileState.NoInstance;
-			}
-			catch (FileNotFoundException)
-			{
-				// PID file doesn't exist - no instance running
+				// The PID file or its directory doesn't exist - no instance running
 				return PidFileState.NoInstance;
 			}
 			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -466,6 +451,27 @@ public static class SingleAppInstance
 			{
 				File.Delete(temporaryPath);
 			}
+		}
+	}
+
+	/// <summary>
+	/// Writes the current process information to the PID file, reporting failure instead of throwing.
+	/// </summary>
+	/// <returns><c>true</c> if the PID file now describes this process; otherwise, <c>false</c>.</returns>
+	/// <remarks>
+	/// The PID file stays in use when another instance keeps it busy for the whole retry window,
+	/// and cannot be replaced at all when access is denied. Either way this instance cannot claim it.
+	/// </remarks>
+	internal static bool TryWritePidFile()
+	{
+		try
+		{
+			WritePidFile();
+			return true;
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			return false;
 		}
 	}
 
