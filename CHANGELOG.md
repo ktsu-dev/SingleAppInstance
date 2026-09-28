@@ -1,6 +1,14 @@
-## v1.3.74
+## v1.3.75 (patch)
 
-No significant changes detected since v1.3.74.
+Changes since v1.3.74:
+
+- Bound the PID file replace loop, and resolve the test analyzer findings ([@Claude](https://github.com/Claude))
+- Test the PID file write failing, and report it through TryWritePidFile ([@Claude](https://github.com/Claude))
+- Unit-test the start-time comparison, including its fallbacks ([@Claude](https://github.com/Claude))
+- Wait for the helper's main module before describing it in tests ([@Claude](https://github.com/Claude))
+- Wait for the helper's main module before describing it in tests ([@Claude](https://github.com/Claude))
+- Replace the PID file atomically and treat contention as another instance [patch] ([@Claude](https://github.com/Claude))
+- Compare the stored StartTime before treating a PID as another instance [patch] ([@Claude](https://github.com/Claude))
 
 ## v1.3.74 (patch)
 
@@ -193,8 +201,10 @@ Changes since v1.3.44:
 Changes since v1.3.43:
 
 - Fix KTSU0001/KTSU0007 package reference errors for ktsu.Sdk 2.26 analyzers ([@matt-edmondson](https://github.com/matt-edmondson))
+- Sync .github\workflows\dotnet.yml ([@KtsuTools](https://github.com/KtsuTools))
 - Sync .editorconfig ([@KtsuTools](https://github.com/KtsuTools))
 - Sync global.json ([@KtsuTools](https://github.com/KtsuTools))
+- Sync .github\workflows\dotnet.yml ([@KtsuTools](https://github.com/KtsuTools))
 
 ## v1.3.43 (patch)
 
@@ -486,12 +496,15 @@ Changes since v1.2.0:
 - Refactor IsAlreadyRunning method for improved clarity and efficiency; add legacy PID handling and enhance process checks ([@matt-edmondson](https://github.com/matt-edmondson))
 - Add project configuration and documentation updates ([@matt-edmondson](https://github.com/matt-edmondson))
 - Remove outdated Copilot documentation and add CLAUDE.md for project guidance ([@matt-edmondson](https://github.com/matt-edmondson))
+- Sync .github\workflows\dotnet.yml ([@KtsuTools](https://github.com/KtsuTools))
 - Remove legacy build scripts ([@matt-edmondson](https://github.com/matt-edmondson))
+- Remove .github\workflows\project.yml ([@matt-edmondson](https://github.com/matt-edmondson))
 - migrate to dotnet 10 ([@matt-edmondson](https://github.com/matt-edmondson))
 - Remove unnecessary PackageReference for Polyfill from SingleAppInstance project ([@matt-edmondson](https://github.com/matt-edmondson))
 - Remove unnecessary PackageReference for Microsoft.Testing.Extensions.CodeCoverage ([@matt-edmondson](https://github.com/matt-edmondson))
 - [patch] Fix TargetFrameworks property in test project ([@matt-edmondson](https://github.com/matt-edmondson))
 - Remove redundant package references from test project ([@matt-edmondson](https://github.com/matt-edmondson))
+- Add Directory.Packages.props and global.json for centralized package version management; update GitHub Actions workflows for improved CI/CD processes and SDK updates; introduce CompatibilitySuppressions.xml for compatibility diagnostics; refactor SingleAppInstance project files for .NET 9 compatibility; enhance PSBuild.psm1 with optional parameters for NuGet and Ktsu package keys. ([@matt-edmondson](https://github.com/matt-edmondson))
 - Update .editorconfig, .gitignore, .runsettings, and PSBuild.psm1 for improved configurations and coverage settings ([@matt-edmondson](https://github.com/matt-edmondson))
 - Update ktsu.AppDataStorage package version to 1.15.5 ([@matt-edmondson](https://github.com/matt-edmondson))
 - Remove Directory.Build.props, Directory.Build.targets, and several PowerShell scripts for metadata and version management. Update SingleAppInstance and its tests to use 'var' for variable declarations and add copyright information. ([@matt-edmondson](https://github.com/matt-edmondson))
@@ -543,10 +556,13 @@ Changes since v1.2.15:
 Changes since v1.2.14:
 
 - Remove outdated Copilot documentation and add CLAUDE.md for project guidance ([@matt-edmondson](https://github.com/matt-edmondson))
+- Sync .github\workflows\dotnet.yml ([@KtsuTools](https://github.com/KtsuTools))
 
 ## v1.2.15-pre.1 (prerelease)
 
-No significant changes detected since v1.2.15.
+Changes since v1.2.14:
+
+- Sync .github\workflows\dotnet.yml ([@KtsuTools](https://github.com/KtsuTools))
 
 ## v1.2.14 (patch)
 
@@ -560,7 +576,11 @@ Changes since v1.2.13:
 
 ## v1.2.14-pre.1 (prerelease)
 
-No significant changes detected since v1.2.14.
+Changes since v1.2.13:
+
+- Sync .github\workflows\dotnet.yml ([@ktsu[bot]](https://github.com/ktsu[bot]))
+- Sync .github\workflows\dotnet.yml ([@ktsu[bot]](https://github.com/ktsu[bot]))
+- Sync .github\workflows\dotnet.yml ([@ktsu[bot]](https://github.com/ktsu[bot]))
 
 ## v1.2.13 (patch)
 
@@ -679,15 +699,15 @@ Changes since v1.2.12-pre.1:
 
 ## v1.2.12-pre.1 (prerelease)
 
-No significant changes detected since v1.2.12.
+Changes since v1.2.11:
+
+- Bump the ktsu group with 5 updates ([@dependabot[bot]](https://github.com/dependabot[bot]))
 
 ## v1.2.11 (patch)
 
 Changes since v1.2.10:
 
 - Remove .github\workflows\project.yml ([@matt-edmondson](https://github.com/matt-edmondson))
-- Bump Polyfill from 9.7.6 to 9.7.7 ([@dependabot[bot]](https://github.com/dependabot[bot]))
-- Bump the ktsu group with 5 updates ([@dependabot[bot]](https://github.com/dependabot[bot]))
 
 ## v1.2.11-pre.2 (prerelease)
 
@@ -697,7 +717,9 @@ Changes since v1.2.11-pre.1:
 
 ## v1.2.11-pre.1 (prerelease)
 
-No significant changes detected since v1.2.11.
+Changes since v1.2.10:
+
+- Bump the ktsu group with 5 updates ([@dependabot[bot]](https://github.com/dependabot[bot]))
 
 ## v1.2.10 (patch)
 
@@ -719,7 +741,9 @@ Changes since v1.2.7:
 
 ## v1.2.8-pre.1 (prerelease)
 
-No significant changes detected since v1.2.8.
+Changes since v1.2.7:
+
+- Bump the ktsu group with 1 update ([@dependabot[bot]](https://github.com/dependabot[bot]))
 
 ## v1.2.7 (patch)
 
@@ -750,12 +774,19 @@ Changes since v1.2.7-pre.1:
 
 ## v1.2.7-pre.1 (prerelease)
 
-No significant changes detected since v1.2.7.
+Changes since v1.2.6:
+
+- Sync scripts\PSBuild.psm1 ([@ktsu[bot]](https://github.com/ktsu[bot]))
+- Sync scripts\update-winget-manifests.ps1 ([@ktsu[bot]](https://github.com/ktsu[bot]))
+- Sync .github\workflows\dotnet.yml ([@ktsu[bot]](https://github.com/ktsu[bot]))
+- Sync .gitattributes ([@ktsu[bot]](https://github.com/ktsu[bot]))
+- Sync .runsettings ([@ktsu[bot]](https://github.com/ktsu[bot]))
 
 ## v1.2.6 (patch)
 
 Changes since v1.2.5:
 
+- Add Directory.Packages.props and global.json for centralized package version management; update GitHub Actions workflows for improved CI/CD processes and SDK updates; introduce CompatibilitySuppressions.xml for compatibility diagnostics; refactor SingleAppInstance project files for .NET 9 compatibility; enhance PSBuild.psm1 with optional parameters for NuGet and Ktsu package keys. ([@matt-edmondson](https://github.com/matt-edmondson))
 - Update .editorconfig, .gitignore, .runsettings, and PSBuild.psm1 for improved configurations and coverage settings ([@matt-edmondson](https://github.com/matt-edmondson))
 - Update ktsu.AppDataStorage package version to 1.15.5 ([@matt-edmondson](https://github.com/matt-edmondson))
 
@@ -846,7 +877,9 @@ No significant changes detected since v1.2.6-pre.1.
 
 ## v1.2.6-pre.1 (prerelease)
 
-No significant changes detected since v1.2.6.
+Changes since v1.2.5:
+
+- Sync scripts\PSBuild.psm1 ([@ktsu[bot]](https://github.com/ktsu[bot]))
 
 ## v1.2.5 (patch)
 
@@ -869,7 +902,10 @@ Changes since v1.2.5-pre.1:
 
 ## v1.2.5-pre.1 (prerelease)
 
-No significant changes detected since v1.2.5.
+Changes since v1.2.4:
+
+- Sync .github\workflows\dotnet.yml ([@ktsu[bot]](https://github.com/ktsu[bot]))
+- Sync .editorconfig ([@ktsu[bot]](https://github.com/ktsu[bot]))
 
 ## v1.2.4 (patch)
 
@@ -926,7 +962,9 @@ Changes since v1.2.2-pre.1:
 
 ## v1.2.2-pre.1 (prerelease)
 
-No significant changes detected since v1.2.2.
+Changes since v1.2.1:
+
+- Bump ktsu.AppDataStorage from 1.7.0 to 1.7.1 in the ktsu group ([@dependabot[bot]](https://github.com/dependabot[bot]))
 
 ## v1.2.1 (patch)
 
