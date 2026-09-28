@@ -206,7 +206,8 @@ public static class SingleAppInstance
 			return !runningProcess.HasExited &&
 				string.Equals(runningProcess.ProcessName, storedProcess.ProcessName, StringComparison.Ordinal) &&
 				runningProcess.MainModule != null &&
-				string.Equals(runningProcess.MainModule.FileName, storedProcess.MainModuleFileName, StringComparison.OrdinalIgnoreCase);
+				string.Equals(runningProcess.MainModule.FileName, storedProcess.MainModuleFileName, StringComparison.OrdinalIgnoreCase) &&
+				HasStoredStartTime(runningProcess, storedProcess);
 		}
 		catch (ArgumentException)
 		{
@@ -237,7 +238,7 @@ public static class SingleAppInstance
 			using Process process = Process.GetProcessById(storedProcess.ProcessId);
 
 			return !process.HasExited &&
-				string.Equals(process.ProcessName, storedProcess.ProcessName, StringComparison.Ordinal);
+				string.Equals(process.ProcessName, storedProcess.ProcessName, StringComparison.Ordinal) && HasStoredStartTime(process, storedProcess);
 		}
 		catch (ArgumentException)
 		{
@@ -253,6 +254,52 @@ public static class SingleAppInstance
 		{
 			// Access denied even for basic process info - cannot determine state
 			return false;
+		}
+	}
+
+	/// <summary>
+	/// How far apart the stored and observed start times of one process may be, allowing for the
+	/// precision lost in the JSON round trip and for platforms that derive start time from clock ticks.
+	/// </summary>
+	private static readonly TimeSpan StartTimeTolerance = TimeSpan.FromSeconds(1);
+
+	/// <summary>
+	/// Checks whether a running process started when the PID file says the stored process did.
+	/// </summary>
+	/// <param name="runningProcess">The running process that currently holds the stored PID.</param>
+	/// <param name="storedProcess">The process information read from the PID file.</param>
+	/// <returns><c>true</c> if the start times match or cannot be compared; otherwise, <c>false</c>.</returns>
+	/// <remarks>
+	/// An application run through the shared <c>dotnet</c> host has the same process name and main module
+	/// as every other process that host runs, so a stale PID recycled onto any of them would otherwise pass
+	/// as another instance. The start time tells them apart. PID files written before the start time was
+	/// recorded, and processes whose start time cannot be read, keep the name and module check alone.
+	/// </remarks>
+	private static bool HasStoredStartTime(Process runningProcess, ProcessInfo storedProcess) =>
+		HasStoredStartTime(() => runningProcess.StartTime, storedProcess.StartTime);
+
+	/// <summary>
+	/// Checks whether a running process's start time matches the stored one.
+	/// </summary>
+	/// <param name="readRunningStartTime">Reads the running process's start time.</param>
+	/// <param name="storedStartTime">The start time read from the PID file.</param>
+	/// <returns><c>true</c> if the start times match or cannot be compared; otherwise, <c>false</c>.</returns>
+	internal static bool HasStoredStartTime(Func<DateTime> readRunningStartTime, DateTime storedStartTime)
+	{
+		if (storedStartTime == default)
+		{
+			return true;
+		}
+
+		try
+		{
+			TimeSpan difference = readRunningStartTime().ToUniversalTime() - storedStartTime.ToUniversalTime();
+			return difference.Duration() <= StartTimeTolerance;
+		}
+		catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+		{
+			// The start time is unavailable or access to it is denied
+			return true;
 		}
 	}
 

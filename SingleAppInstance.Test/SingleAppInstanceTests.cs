@@ -292,6 +292,101 @@ public class SingleAppInstanceTests
 	}
 
 	[TestMethod]
+	public void IsAlreadyRunning_WithMatchingProcessButDifferentStartTime_ShouldReturnFalse()
+	{
+		// Arrange - the PID, name and main module all describe a live process, but the start time
+		// does not, which is what a stale PID file looks like once the operating system recycles the
+		// PID onto another process run by the same host, such as another `dotnet` process
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		using HelperProcess helper = HelperProcess.Start("StartTimeHelper");
+
+		ProcessInfo processInfo = DescribeProcess(helper.Process);
+		processInfo.StartTime = processInfo.StartTime.AddHours(-1);
+		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(processInfo));
+
+		// Act
+		bool result = SingleAppInstance.IsAlreadyRunning();
+
+		// Assert
+		Assert.IsFalse(result, "Should return false when the running process started at a different time than the stored one");
+	}
+
+	[TestMethod]
+	public void IsAlreadyRunning_WithMatchingProcessAndStartTime_ShouldReturnTrue()
+	{
+		// Arrange - every stored field describes the live process, so it is another instance
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		using HelperProcess helper = HelperProcess.Start("StartTimeHelper");
+
+		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(DescribeProcess(helper.Process)));
+
+		// Act
+		bool result = SingleAppInstance.IsAlreadyRunning();
+
+		// Assert
+		Assert.IsTrue(result, "Should return true when the stored process information matches a running process");
+	}
+
+	[TestMethod]
+	public void IsAlreadyRunning_WithMatchingProcessAndNoStoredStartTime_ShouldReturnTrue()
+	{
+		// Arrange - a PID file written before the start time was recorded deserializes it as default
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		using HelperProcess helper = HelperProcess.Start("StartTimeHelper");
+
+		ProcessInfo processInfo = DescribeProcess(helper.Process);
+		processInfo.StartTime = default;
+		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(processInfo));
+
+		// Act
+		bool result = SingleAppInstance.IsAlreadyRunning();
+
+		// Assert
+		Assert.IsTrue(result, "Should fall back to the name and module check when no start time was stored");
+	}
+
+	[TestMethod]
+	public void HasStoredStartTime_WithinTolerance_ShouldReturnTrue()
+	{
+		DateTime stored = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+
+		Assert.IsTrue(SingleAppInstance.HasStoredStartTime(() => stored.AddMilliseconds(900), stored));
+		Assert.IsTrue(SingleAppInstance.HasStoredStartTime(() => stored.AddMilliseconds(-900), stored));
+	}
+
+	[TestMethod]
+	public void HasStoredStartTime_BeyondTolerance_ShouldReturnFalse()
+	{
+		DateTime stored = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+
+		Assert.IsFalse(SingleAppInstance.HasStoredStartTime(() => stored.AddSeconds(2), stored));
+		Assert.IsFalse(SingleAppInstance.HasStoredStartTime(() => stored.AddSeconds(-2), stored));
+	}
+
+	[TestMethod]
+	public void HasStoredStartTime_ComparesLocalAndUniversalTimesAsTheSameInstant()
+	{
+		DateTime stored = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+
+		Assert.IsTrue(SingleAppInstance.HasStoredStartTime(stored.ToLocalTime, stored));
+	}
+
+	[TestMethod]
+	public void HasStoredStartTime_WithNoStoredStartTime_ShouldNotReadTheRunningStartTime()
+	{
+		Assert.IsTrue(SingleAppInstance.HasStoredStartTime(() => throw new AssertFailedException("The running start time should not be read"), default));
+	}
+
+	[TestMethod]
+	public void HasStoredStartTime_WhenRunningStartTimeIsUnavailable_ShouldReturnTrue()
+	{
+		DateTime stored = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+
+		Assert.IsTrue(SingleAppInstance.HasStoredStartTime(() => throw new InvalidOperationException(), stored));
+		Assert.IsTrue(SingleAppInstance.HasStoredStartTime(() => throw new Win32Exception(), stored));
+	}
+
+	[TestMethod]
 	public void IsAlreadyRunning_WithHighNonExistentPid_ShouldReturnFalse()
 	{
 		// Arrange - JSON PID file with a very high PID that shouldn't exist
@@ -492,6 +587,17 @@ public class SingleAppInstanceTests
 	}
 
 	/// <summary>
+	/// Describes a running process the way <see cref="SingleAppInstance.WritePidFile"/> records one.
+	/// </summary>
+	private static ProcessInfo DescribeProcess(Process process) => new()
+	{
+		ProcessId = process.Id,
+		ProcessName = process.ProcessName,
+		StartTime = process.StartTime,
+		MainModuleFileName = process.MainModule?.FileName,
+	};
+
+	/// <summary>
 	/// Finds a running process that is neither the current process nor shares its process name.
 	/// </summary>
 	private static Process? FindRunningProcessWithDifferentName(Process currentProcess)
@@ -601,7 +707,38 @@ public class SingleAppInstanceTests
 			Process? process = Process.Start(startInfo);
 			Assert.IsNotNull(process, "Should be able to start a helper process");
 
-			return new HelperProcess(process, temporaryDirectory);
+			HelperProcess helper = new(process, temporaryDirectory);
+			helper.WaitForMainModule();
+			return helper;
+		}
+
+		/// <summary>
+		/// Waits until the helper's main module can be read, since Windows reports none until the
+		/// loader has finished starting the process, and a test that records it too early would
+		/// describe a different process from the one IsAlreadyRunning later inspects.
+		/// </summary>
+		private void WaitForMainModule()
+		{
+			Stopwatch stopwatch = Stopwatch.StartNew();
+			while (stopwatch.Elapsed < TimeSpan.FromSeconds(10))
+			{
+				Process.Refresh();
+				try
+				{
+					if (Process.MainModule?.FileName is not null)
+					{
+						return;
+					}
+				}
+				catch (Win32Exception)
+				{
+					// The module list is not readable yet
+				}
+
+				Thread.Sleep(50);
+			}
+
+			Assert.Inconclusive("The helper process's main module never became readable");
 		}
 
 		public void Dispose()
