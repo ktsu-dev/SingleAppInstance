@@ -12,6 +12,8 @@ using System.Text.Json;
 [DoNotParallelize]
 public class SingleAppInstanceTests
 {
+	public TestContext TestContext { get; set; } = null!;
+
 	[TestInitialize]
 	public void TestInitialize()
 	{
@@ -435,16 +437,17 @@ public class SingleAppInstanceTests
 		string pidFilePath = SingleAppInstance.PidFilePath;
 		string ownPid = Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
 
-		Task racingWriter = Task.Run(() =>
+		Task racingWriter = Task.Run(async () =>
 		{
 			Stopwatch stopwatch = Stopwatch.StartNew();
 			while (stopwatch.Elapsed < TimeSpan.FromSeconds(10))
 			{
 				try
 				{
-					if (File.ReadAllText(pidFilePath).Contains(ownPid, StringComparison.Ordinal))
+					string content = await File.ReadAllTextAsync(pidFilePath, TestContext.CancellationToken).ConfigureAwait(false);
+					if (content.Contains(ownPid, StringComparison.Ordinal))
 					{
-						File.WriteAllText(pidFilePath, "{\"ProcessId\":12");
+						await File.WriteAllTextAsync(pidFilePath, "{\"ProcessId\":12", TestContext.CancellationToken).ConfigureAwait(false);
 						return;
 					}
 				}
@@ -457,13 +460,13 @@ public class SingleAppInstanceTests
 					// Being replaced
 				}
 
-				Thread.Sleep(10);
+				await Task.Delay(10, TestContext.CancellationToken).ConfigureAwait(false);
 			}
-		});
+		}, TestContext.CancellationToken);
 
 		// Act
 		bool result = SingleAppInstance.ShouldLaunch();
-		racingWriter.Wait();
+		racingWriter.Wait(TestContext.CancellationToken);
 
 		// Assert
 		Assert.IsFalse(result, "Unparseable content after this instance wrote its PID file should not grant a launch");
@@ -508,7 +511,7 @@ public class SingleAppInstanceTests
 					// The reader held the file for every retry; contention is expected here
 				}
 			}
-		});
+		}, TestContext.CancellationToken);
 
 		int partialReads = 0;
 		string? lastPartialContent = null;
@@ -552,7 +555,7 @@ public class SingleAppInstanceTests
 		finally
 		{
 			writing.Cancel();
-			writer.Wait();
+			writer.Wait(TestContext.CancellationToken);
 		}
 
 		// Assert

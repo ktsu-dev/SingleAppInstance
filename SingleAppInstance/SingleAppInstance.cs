@@ -430,20 +430,23 @@ public static class SingleAppInstance
 		{
 			File.WriteAllText(temporaryPath, json);
 
-			for (int attempt = 1; ; attempt++)
+			for (int attempt = 1; attempt < PidFileAttempts; attempt++)
 			{
 				try
 				{
 					ReplacePidFile(temporaryPath, pidFilePath);
 					return;
 				}
-				catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < PidFileAttempts)
+				catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 				{
 					// Another instance is reading or replacing the PID file
 				}
 
 				Thread.Sleep(TimeSpan.FromTicks(PidFileRetryDelay.Ticks * attempt));
 			}
+
+			// The final attempt lets a persistent failure reach the caller
+			ReplacePidFile(temporaryPath, pidFilePath);
 		}
 		finally
 		{
