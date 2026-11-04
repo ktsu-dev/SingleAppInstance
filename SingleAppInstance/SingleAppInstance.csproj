@@ -2,6 +2,12 @@
   <Sdk Name="Microsoft.NET.Sdk" />
   <Sdk Name="ktsu.Sdk" />
 
+  <!-- Trim and AOT analysis, so a reflection-based call that would crash a trimmed or Native AOT
+       app is a build error here rather than a crash there. -->
+  <PropertyGroup Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net7.0'))">
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="ktsu.AppDataStorage" />
     <PackageReference Include="ktsu.Semantics.Paths" />
