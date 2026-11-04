@@ -686,17 +686,21 @@ public class SingleAppInstanceTests
 	}
 
 	[TestMethod]
-	public void TryWritePidFile_WhenPidFileCannotBeReplaced_ShouldReturnFalse()
+	public void TryWritePidFile_WhenPidFileCannotBeReplaced_ShouldThrowNamingThePidFile()
 	{
-		// Arrange
+		// Arrange - a directory where the PID file belongs is a lasting fault, not another instance
 		string pidFilePath = SingleAppInstance.PidFilePath;
 		Directory.CreateDirectory(pidFilePath);
 
 		// Act
-		bool result;
+		Exception? failure = null;
 		try
 		{
-			result = SingleAppInstance.TryWritePidFile();
+			SingleAppInstance.TryWritePidFile();
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			failure = ex;
 		}
 		finally
 		{
@@ -704,7 +708,96 @@ public class SingleAppInstanceTests
 		}
 
 		// Assert
-		Assert.IsFalse(result, "TryWritePidFile should report that this instance could not claim the PID file");
+		Assert.IsNotNull(failure, "A PID file that can never be written must not read as another instance claiming it");
+		Assert.Contains(pidFilePath, failure.Message, "The failure should name the PID file");
+	}
+
+	[TestMethod]
+	public void IsAlreadyRunning_WhenPidFileCannotBeRead_ShouldThrow()
+	{
+		// Arrange - reading a directory fails with access denied on every platform, and keeps failing
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		Directory.CreateDirectory(pidFilePath);
+
+		// Act
+		Exception? failure = null;
+		try
+		{
+			SingleAppInstance.IsAlreadyRunning();
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			failure = ex;
+		}
+		finally
+		{
+			Directory.Delete(pidFilePath, recursive: true);
+		}
+
+		// Assert
+		Assert.IsNotNull(failure, "A PID file that can never be read must not read as another instance running");
+		Assert.Contains(pidFilePath, failure.Message, "The failure should name the PID file");
+	}
+
+	[TestMethod]
+	public void ShouldLaunch_WhenPidFileCannotBeReadOrWritten_ShouldThrowInsteadOfReturningFalse()
+	{
+		// Arrange
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		Directory.CreateDirectory(pidFilePath);
+
+		// Act
+		bool? result = null;
+		bool threw = false;
+		try
+		{
+			result = SingleAppInstance.ShouldLaunch();
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			threw = true;
+		}
+		finally
+		{
+			Directory.Delete(pidFilePath, recursive: true);
+		}
+
+		// Assert
+		Assert.IsTrue(threw, $"ShouldLaunch should report an unusable PID file, but returned {result}");
+	}
+
+	[TestMethod]
+	public void ShouldLaunch_WhenPidFolderIsReadOnly_ShouldThrowInsteadOfReturningFalse()
+	{
+		// Arrange - a folder left owned by another user, as a run under sudo leaves it
+		if (OperatingSystem.IsWindows() || Environment.IsPrivilegedProcess)
+		{
+			Assert.Inconclusive("Folder permissions only deny an unprivileged process on Unix");
+			return;
+		}
+
+		string pidDirectoryPath = SingleAppInstance.PidDirectoryPath;
+		UnixFileMode originalMode = File.GetUnixFileMode(pidDirectoryPath);
+		File.SetUnixFileMode(pidDirectoryPath, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+
+		// Act
+		bool? result = null;
+		bool threw = false;
+		try
+		{
+			result = SingleAppInstance.ShouldLaunch();
+		}
+		catch (UnauthorizedAccessException)
+		{
+			threw = true;
+		}
+		finally
+		{
+			File.SetUnixFileMode(pidDirectoryPath, originalMode);
+		}
+
+		// Assert
+		Assert.IsTrue(threw, $"ShouldLaunch should report a PID folder it cannot write to, but returned {result}");
 	}
 
 	[TestMethod]
