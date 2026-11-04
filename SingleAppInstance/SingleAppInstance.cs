@@ -4,6 +4,7 @@ namespace ktsu.SingleAppInstance;
 
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
@@ -26,6 +27,8 @@ public static class SingleAppInstance
 	/// This method checks if another instance of the application is already running by calling <see cref="ShouldLaunch"/>.
 	/// If another instance is detected, the current application exits with a status code of 0.
 	/// </remarks>
+	/// <exception cref="IOException">The PID file or its folder cannot be read or written.</exception>
+	/// <exception cref="UnauthorizedAccessException">Access to the PID file or its folder is denied.</exception>
 	public static void ExitIfAlreadyRunning()
 	{
 		if (!ShouldLaunch())
@@ -45,9 +48,13 @@ public static class SingleAppInstance
 	/// If no other instance is running, it writes the current process ID to a PID file
 	/// and waits for a short period to handle potential race conditions. It then checks
 	/// again to ensure no other instance started during the wait period.
-	/// If the PID file stays locked by another process, or cannot be written, another instance
-	/// is taken to be starting and this method returns <c>false</c> rather than throwing.
+	/// If the PID file stays locked by another process, another instance is taken to be starting
+	/// and this method returns <c>false</c> rather than throwing. Any other failure to read or write
+	/// the PID file, such as a file or folder left owned by another user, is a lasting fault rather
+	/// than a sign of another instance, so it is thrown instead of being reported as one.
 	/// </remarks>
+	/// <exception cref="IOException">The PID file or its folder cannot be read or written.</exception>
+	/// <exception cref="UnauthorizedAccessException">Access to the PID file or its folder is denied.</exception>
 	public static bool ShouldLaunch()
 	{
 		// if there is already an instance running, exit
@@ -148,11 +155,15 @@ public static class SingleAppInstance
 	/// <remarks>
 	/// Another instance may be writing the PID file at the same moment, which on some platforms
 	/// makes the read fail with a sharing violation. The read is retried briefly, and if the file
-	/// stays inaccessible it is treated as another instance that is starting.
+	/// stays locked it is treated as another instance that is starting. Any other failure that
+	/// outlasts the retries is thrown, because it will not clear by itself.
 	/// </remarks>
+	/// <exception cref="IOException">The PID file cannot be read for a reason other than a lock.</exception>
+	/// <exception cref="UnauthorizedAccessException">Access to the PID file is denied.</exception>
 	internal static PidFileState ReadPidFileState()
 	{
 		int currentPid = GetCurrentProcessId();
+		Exception? lastFailure = null;
 
 		for (int attempt = 1; attempt <= PidFileAttempts; attempt++)
 		{
@@ -168,7 +179,8 @@ public static class SingleAppInstance
 			}
 			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 			{
-				// Another instance is writing or holding the PID file
+				// Another instance may be writing or holding the PID file
+				lastFailure = ex;
 			}
 
 			if (attempt < PidFileAttempts)
@@ -177,8 +189,102 @@ public static class SingleAppInstance
 			}
 		}
 
-		// The PID file stayed inaccessible, so another instance is holding it while it starts
-		return PidFileState.AnotherInstance;
+		// A PID file that stayed locked is another instance holding it while it starts
+		if (lastFailure is IOException ioException && IsLockViolation(ioException))
+		{
+			return PidFileState.AnotherInstance;
+		}
+
+		throw PidFileFault("read", lastFailure!);
+	}
+
+	/// <summary>
+	/// The Win32 error a file open fails with when another process has the file open without sharing it.
+	/// </summary>
+	private const int ErrorSharingViolation = 0x20;
+
+	/// <summary>
+	/// The Win32 error a file operation fails with when another process has locked part of the file.
+	/// </summary>
+	private const int ErrorLockViolation = 0x21;
+
+	/// <summary>
+	/// The <c>EWOULDBLOCK</c> errno on Linux, which .NET reports when another process holds the file's lock.
+	/// </summary>
+	private const int LinuxWouldBlock = 11;
+
+	/// <summary>
+	/// The <c>EWOULDBLOCK</c> errno on macOS and FreeBSD, which .NET reports when another process holds the file's lock.
+	/// </summary>
+	private const int BsdWouldBlock = 35;
+
+	/// <summary>
+	/// Checks whether an I/O failure was caused by another process holding the file.
+	/// </summary>
+	/// <param name="exception">The I/O failure.</param>
+	/// <returns><c>true</c> for a sharing or lock violation; otherwise, <c>false</c>.</returns>
+	/// <remarks>
+	/// Windows reports these as an HRESULT wrapping a Win32 error. On Unix, .NET locks a file opened
+	/// with <see cref="FileShare.None"/> with <c>flock</c>, and reports another process holding that lock
+	/// with the bare <c>EWOULDBLOCK</c> errno. On a Unix whose errno is not known here, every I/O failure
+	/// is still taken to be another instance, as it was before access failures were told apart.
+	/// </remarks>
+	private static bool IsLockViolation(IOException exception) => IsLockViolation(exception.HResult, CurrentPlatform);
+
+	/// <summary>
+	/// FreeBSD, which <see cref="OSPlatform"/> names only on newer frameworks.
+	/// </summary>
+	private static readonly OSPlatform FreeBsd = OSPlatform.Create("FREEBSD");
+
+	/// <summary>
+	/// The platform this process runs on, or <c>null</c> when it is none whose lock error is known.
+	/// </summary>
+	private static readonly OSPlatform? CurrentPlatform =
+		new[] { OSPlatform.Windows, OSPlatform.Linux, OSPlatform.OSX, FreeBsd }
+			.Select(platform => (OSPlatform?)platform)
+			.FirstOrDefault(platform => RuntimeInformation.IsOSPlatform(platform!.Value));
+
+	/// <summary>
+	/// Checks whether an I/O error code is the one a platform reports when another process holds the file.
+	/// </summary>
+	/// <param name="code">The <see cref="Exception.HResult"/> of the I/O failure.</param>
+	/// <param name="platform">The platform the failure happened on, or <c>null</c> when it is not known.</param>
+	/// <returns><c>true</c> for a sharing or lock violation; otherwise, <c>false</c>.</returns>
+	internal static bool IsLockViolation(int code, OSPlatform? platform)
+	{
+		if (platform == OSPlatform.Windows)
+		{
+			return (code & 0xFFFF) is ErrorSharingViolation or ErrorLockViolation;
+		}
+
+		if (platform == OSPlatform.Linux)
+		{
+			return code == LinuxWouldBlock;
+		}
+
+		if (platform == OSPlatform.OSX || platform == FreeBsd)
+		{
+			return code == BsdWouldBlock;
+		}
+
+		return true;
+	}
+
+	/// <summary>
+	/// Describes a failure to use the PID file that does not come from another instance.
+	/// </summary>
+	/// <param name="operation">What was being done with the PID file.</param>
+	/// <param name="failure">The failure that outlasted the retries.</param>
+	/// <returns>An exception of the same kind as <paramref name="failure"/> that names the PID file.</returns>
+	private static Exception PidFileFault(string operation, Exception failure)
+	{
+		string message = $"SingleAppInstance could not {operation} its PID file '{PidFilePath}': {failure.Message} " +
+			"This is not another instance running. Check that the current user can read and write the file and its folder; " +
+			"a run as another user, such as under sudo, can leave them owned by that user.";
+
+		return failure is UnauthorizedAccessException
+			? new UnauthorizedAccessException(message, failure)
+			: new IOException(message, failure);
 	}
 
 	/// <summary>
@@ -509,9 +615,12 @@ public static class SingleAppInstance
 	/// </summary>
 	/// <returns><c>true</c> if the PID file now describes this process; otherwise, <c>false</c>.</returns>
 	/// <remarks>
-	/// The PID file stays in use when another instance keeps it busy for the whole retry window,
-	/// and cannot be replaced at all when access is denied. Either way this instance cannot claim it.
+	/// The PID file stays locked when another instance keeps it busy for the whole retry window,
+	/// and this instance cannot claim it. Any other failure, such as access being denied, is a
+	/// lasting fault rather than another instance, and is thrown.
 	/// </remarks>
+	/// <exception cref="IOException">The PID file or its folder cannot be written for a reason other than a lock.</exception>
+	/// <exception cref="UnauthorizedAccessException">Access to the PID file or its folder is denied.</exception>
 	internal static bool TryWritePidFile()
 	{
 		try
@@ -519,9 +628,13 @@ public static class SingleAppInstance
 			WritePidFile();
 			return true;
 		}
-		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		catch (IOException ex) when (IsLockViolation(ex))
 		{
 			return false;
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			throw PidFileFault("write", ex);
 		}
 	}
 
