@@ -713,6 +713,30 @@ public class SingleAppInstanceTests
 	}
 
 	[TestMethod]
+	[DataRow("WINDOWS", unchecked((int)0x80070020), true, DisplayName = "Windows sharing violation")]
+	[DataRow("WINDOWS", unchecked((int)0x80070021), true, DisplayName = "Windows lock violation")]
+	[DataRow("WINDOWS", unchecked((int)0x80070005), false, DisplayName = "Windows access denied")]
+	[DataRow("LINUX", 11, true, DisplayName = "Linux EWOULDBLOCK")]
+	[DataRow("LINUX", 13, false, DisplayName = "Linux EACCES")]
+	[DataRow("LINUX", 35, false, DisplayName = "Linux errno 35 is not EWOULDBLOCK")]
+	[DataRow("OSX", 35, true, DisplayName = "macOS EWOULDBLOCK")]
+	[DataRow("OSX", 11, false, DisplayName = "macOS errno 11 is not EWOULDBLOCK")]
+	[DataRow("FREEBSD", 35, true, DisplayName = "FreeBSD EWOULDBLOCK")]
+	[DataRow("FREEBSD", 13, false, DisplayName = "FreeBSD EACCES")]
+	[DataRow(null, 5, true, DisplayName = "Unknown platform keeps every I/O failure as another instance")]
+	public void IsLockViolation_RecognisesEachPlatformsLockError(string? platformName, int code, bool expected)
+	{
+		// Arrange
+		OSPlatform? platform = platformName is null ? null : OSPlatform.Create(platformName);
+
+		// Act
+		bool result = SingleAppInstance.IsLockViolation(code, platform);
+
+		// Assert
+		Assert.AreEqual(expected, result);
+	}
+
+	[TestMethod]
 	public void IsAlreadyRunning_WhenPidFileCannotBeRead_ShouldThrow()
 	{
 		// Arrange - reading a directory fails with access denied on every platform, and keeps failing

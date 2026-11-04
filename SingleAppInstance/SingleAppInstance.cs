@@ -229,32 +229,46 @@ public static class SingleAppInstance
 	/// with the bare <c>EWOULDBLOCK</c> errno. On a Unix whose errno is not known here, every I/O failure
 	/// is still taken to be another instance, as it was before access failures were told apart.
 	/// </remarks>
-	private static bool IsLockViolation(IOException exception)
+	private static bool IsLockViolation(IOException exception) => IsLockViolation(exception.HResult, CurrentPlatform);
+
+	/// <summary>
+	/// FreeBSD, which <see cref="OSPlatform"/> names only on newer frameworks.
+	/// </summary>
+	private static readonly OSPlatform FreeBsd = OSPlatform.Create("FREEBSD");
+
+	/// <summary>
+	/// The platform this process runs on, or <c>null</c> when it is none whose lock error is known.
+	/// </summary>
+	private static readonly OSPlatform? CurrentPlatform =
+		new[] { OSPlatform.Windows, OSPlatform.Linux, OSPlatform.OSX, FreeBsd }
+			.Select(platform => (OSPlatform?)platform)
+			.FirstOrDefault(platform => RuntimeInformation.IsOSPlatform(platform!.Value));
+
+	/// <summary>
+	/// Checks whether an I/O error code is the one a platform reports when another process holds the file.
+	/// </summary>
+	/// <param name="code">The <see cref="Exception.HResult"/> of the I/O failure.</param>
+	/// <param name="platform">The platform the failure happened on, or <c>null</c> when it is not known.</param>
+	/// <returns><c>true</c> for a sharing or lock violation; otherwise, <c>false</c>.</returns>
+	internal static bool IsLockViolation(int code, OSPlatform? platform)
 	{
-		int code = exception.HResult;
-		if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+		if (platform == OSPlatform.Windows)
 		{
 			return (code & 0xFFFF) is ErrorSharingViolation or ErrorLockViolation;
 		}
 
-		if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+		if (platform == OSPlatform.Linux)
 		{
 			return code == LinuxWouldBlock;
 		}
 
-		if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) || IsFreeBsd())
+		if (platform == OSPlatform.OSX || platform == FreeBsd)
 		{
 			return code == BsdWouldBlock;
 		}
 
 		return true;
 	}
-
-	/// <summary>
-	/// Checks whether the current platform is FreeBSD.
-	/// </summary>
-	/// <returns><c>true</c> on FreeBSD; otherwise, <c>false</c>.</returns>
-	private static bool IsFreeBsd() => RuntimeInformation.IsOSPlatform(OSPlatform.Create("FREEBSD"));
 
 	/// <summary>
 	/// Describes a failure to use the PID file that does not come from another instance.
