@@ -353,6 +353,63 @@ public class SingleAppInstanceTests
 	}
 
 	[TestMethod]
+	public void IsStoredProcessRunning_WhenMainModuleIsUnreadable_ShouldFallBackToNameAndStartTime()
+	{
+		// Arrange - on Linux another user's MainModule is null rather than a Win32Exception
+		using HelperProcess helper = HelperProcess.Start("StartTimeHelper");
+		SingleAppInstance.ProcessInfo storedProcess = DescribeProcessForLibrary(helper.Process);
+
+		// Act
+		bool result = SingleAppInstance.IsStoredProcessRunning(storedProcess, _ => null);
+
+		// Assert
+		Assert.IsTrue(result, "A process whose module list can't be read but whose name and start time match is another instance");
+	}
+
+	[TestMethod]
+	public void IsStoredProcessRunning_WhenMainModuleIsUnreadableAndStartTimeDiffers_ShouldReturnFalse()
+	{
+		// Arrange
+		using HelperProcess helper = HelperProcess.Start("StartTimeHelper");
+		SingleAppInstance.ProcessInfo storedProcess = DescribeProcessForLibrary(helper.Process);
+		storedProcess.StartTime = helper.Process.StartTime.AddMinutes(-5);
+
+		// Act
+		bool result = SingleAppInstance.IsStoredProcessRunning(storedProcess, _ => null);
+
+		// Assert
+		Assert.IsFalse(result, "The fallback still compares the start time, so a recycled PID is not another instance");
+	}
+
+	[TestMethod]
+	public void IsStoredProcessRunning_WhenMainModuleAccessIsDenied_ShouldFallBackToNameAndStartTime()
+	{
+		// Arrange - the Windows path, which throws instead of returning null
+		using HelperProcess helper = HelperProcess.Start("StartTimeHelper");
+		SingleAppInstance.ProcessInfo storedProcess = DescribeProcessForLibrary(helper.Process);
+
+		// Act
+		bool result = SingleAppInstance.IsStoredProcessRunning(storedProcess, _ => throw new Win32Exception());
+
+		// Assert
+		Assert.IsTrue(result, "Access denied to the module list should still fall back to the name and start time check");
+	}
+
+	[TestMethod]
+	public void IsStoredProcessRunning_WhenMainModuleDiffers_ShouldReturnFalse()
+	{
+		// Arrange
+		using HelperProcess helper = HelperProcess.Start("StartTimeHelper");
+		SingleAppInstance.ProcessInfo storedProcess = DescribeProcessForLibrary(helper.Process);
+
+		// Act
+		bool result = SingleAppInstance.IsStoredProcessRunning(storedProcess, _ => "/some/other/app");
+
+		// Assert
+		Assert.IsFalse(result, "A readable main module that differs from the stored one is not another instance");
+	}
+
+	[TestMethod]
 	public void HasStoredStartTime_WithinTolerance_ShouldReturnTrue()
 	{
 		DateTime stored = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
@@ -825,6 +882,14 @@ public class SingleAppInstanceTests
 	/// <summary>
 	/// Describes a running process the way <see cref="SingleAppInstance.WritePidFile"/> records one.
 	/// </summary>
+	private static SingleAppInstance.ProcessInfo DescribeProcessForLibrary(Process process) => new()
+	{
+		ProcessId = process.Id,
+		ProcessName = process.ProcessName,
+		StartTime = process.StartTime,
+		MainModuleFileName = process.MainModule?.FileName,
+	};
+
 	private static ProcessInfo DescribeProcess(Process process) => new()
 	{
 		ProcessId = process.Id,

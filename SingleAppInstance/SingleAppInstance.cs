@@ -267,16 +267,45 @@ public static class SingleAppInstance
 	/// </summary>
 	/// <param name="storedProcess">The process information read from the PID file.</param>
 	/// <returns><c>true</c> if the stored process is still running and matches; otherwise, <c>false</c>.</returns>
-	private static bool IsStoredProcessRunning(ProcessInfo storedProcess)
+	private static bool IsStoredProcessRunning(ProcessInfo storedProcess) =>
+		IsStoredProcessRunning(storedProcess, process => process.MainModule?.FileName);
+
+	/// <summary>
+	/// Checks if the process described by the stored process info is still running
+	/// and matches the expected application, reading the main module through the given lookup.
+	/// </summary>
+	/// <param name="storedProcess">The process information read from the PID file.</param>
+	/// <param name="readMainModuleFileName">
+	/// Reads the running process's main module file name, or returns <see langword="null"/> when the
+	/// module list cannot be read.
+	/// </param>
+	/// <returns><c>true</c> if the stored process is still running and matches; otherwise, <c>false</c>.</returns>
+	/// <remarks>
+	/// Windows denies another user's module list by throwing <see cref="System.ComponentModel.Win32Exception"/>.
+	/// Linux builds it from <c>/proc/&lt;pid&gt;/maps</c>, which another user cannot read, and returns no
+	/// main module without throwing. Both mean the module cannot be compared, so both fall back to the
+	/// name and start time check.
+	/// </remarks>
+	internal static bool IsStoredProcessRunning(ProcessInfo storedProcess, Func<Process, string?> readMainModuleFileName)
 	{
 		try
 		{
 			using Process runningProcess = Process.GetProcessById(storedProcess.ProcessId);
 
-			return !runningProcess.HasExited &&
-				string.Equals(runningProcess.ProcessName, storedProcess.ProcessName, StringComparison.Ordinal) &&
-				runningProcess.MainModule != null &&
-				string.Equals(runningProcess.MainModule.FileName, storedProcess.MainModuleFileName, StringComparison.OrdinalIgnoreCase) &&
+			if (runningProcess.HasExited ||
+				!string.Equals(runningProcess.ProcessName, storedProcess.ProcessName, StringComparison.Ordinal))
+			{
+				return false;
+			}
+
+			string? mainModuleFileName = readMainModuleFileName(runningProcess);
+			if (mainModuleFileName is null)
+			{
+				// The module list cannot be read - fall back to the name-only check
+				return IsStoredProcessRunningByName(storedProcess);
+			}
+
+			return string.Equals(mainModuleFileName, storedProcess.MainModuleFileName, StringComparison.OrdinalIgnoreCase) &&
 				HasStoredStartTime(runningProcess, storedProcess);
 		}
 		catch (ArgumentException)
