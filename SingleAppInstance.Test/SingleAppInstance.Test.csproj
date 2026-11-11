@@ -6,6 +6,9 @@
     <IsTestProject>true</IsTestProject>
     <TargetFramework>net10.0</TargetFramework>
     <TargetFrameworks></TargetFrameworks>
+    <!-- A trimmed or Native AOT app runs with reflection-based System.Text.Json disabled, so the
+         tests do too: a reflection call in the library fails every test that writes a PID file. -->
+    <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
   </PropertyGroup>
 
   <ItemGroup>

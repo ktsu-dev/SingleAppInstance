@@ -214,7 +214,7 @@ public static class SingleAppInstance
 		try
 		{
 			Utf8JsonReader reader = new(Encoding.UTF8.GetBytes(pidFileContents));
-			storedProcess = JsonSerializer.Deserialize<ProcessInfo>(ref reader);
+			storedProcess = JsonSerializer.Deserialize(ref reader, ProcessInfoJsonContext.Default.ProcessInfo);
 			if (storedProcess == null)
 			{
 				return PidFileState.NoInstance;
@@ -498,7 +498,7 @@ public static class SingleAppInstance
 			MainModuleFileName = currentProcess.MainModule?.FileName
 		};
 
-		string json = JsonSerializer.Serialize(processInfo);
+		string json = JsonSerializer.Serialize(processInfo, ProcessInfoJsonContext.Default.ProcessInfo);
 		string pidFilePath = PidFilePath;
 		string temporaryPath = $"{pidFilePath}.{Guid.NewGuid():N}.tmp";
 

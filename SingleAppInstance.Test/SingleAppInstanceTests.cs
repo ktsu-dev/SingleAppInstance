@@ -42,7 +42,7 @@ public class SingleAppInstanceTests
 
 		// Verify file content
 		string fileContent = File.ReadAllText(pidFilePath);
-		ProcessInfo? processInfo = JsonSerializer.Deserialize<ProcessInfo>(fileContent);
+		ProcessInfo? processInfo = JsonSerializer.Deserialize(fileContent, TestJsonContext.Default.ProcessInfo);
 
 		Assert.IsNotNull(processInfo);
 		using Process currentProcess = Process.GetCurrentProcess();
@@ -79,7 +79,7 @@ public class SingleAppInstanceTests
 		// Assert
 		string content = File.ReadAllText(pidFilePath);
 		Assert.AreNotEqual("old content", content);
-		ProcessInfo? processInfo = JsonSerializer.Deserialize<ProcessInfo>(content);
+		ProcessInfo? processInfo = JsonSerializer.Deserialize(content, TestJsonContext.Default.ProcessInfo);
 		Assert.IsNotNull(processInfo);
 		Assert.AreEqual(Environment.ProcessId, processInfo.ProcessId);
 	}
@@ -109,7 +109,7 @@ public class SingleAppInstanceTests
 			MainModuleFileName = currentProcess.MainModule?.FileName,
 		};
 
-		string json = JsonSerializer.Serialize(processInfo);
+		string json = JsonSerializer.Serialize(processInfo, TestJsonContext.Default.ProcessInfo);
 		File.WriteAllText(pidFilePath, json);
 
 		// Act
@@ -198,7 +198,7 @@ public class SingleAppInstanceTests
 			MainModuleFileName = "NonExistentFile.exe",
 		};
 
-		string json = JsonSerializer.Serialize(processInfo);
+		string json = JsonSerializer.Serialize(processInfo, TestJsonContext.Default.ProcessInfo);
 		File.WriteAllText(pidFilePath, json);
 
 		// Act
@@ -283,7 +283,7 @@ public class SingleAppInstanceTests
 				MainModuleFileName = "C:\\nonexistent\\fake.exe",
 			};
 
-			string json = JsonSerializer.Serialize(processInfo);
+			string json = JsonSerializer.Serialize(processInfo, TestJsonContext.Default.ProcessInfo);
 			File.WriteAllText(pidFilePath, json);
 
 			// Act
@@ -309,7 +309,7 @@ public class SingleAppInstanceTests
 
 		ProcessInfo processInfo = DescribeProcess(helper.Process);
 		processInfo.StartTime = processInfo.StartTime.AddHours(-1);
-		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(processInfo));
+		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(processInfo, TestJsonContext.Default.ProcessInfo));
 
 		// Act
 		bool result = SingleAppInstance.IsAlreadyRunning();
@@ -325,7 +325,7 @@ public class SingleAppInstanceTests
 		string pidFilePath = SingleAppInstance.PidFilePath;
 		using HelperProcess helper = HelperProcess.Start("StartTimeHelper");
 
-		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(DescribeProcess(helper.Process)));
+		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(DescribeProcess(helper.Process), TestJsonContext.Default.ProcessInfo));
 
 		// Act
 		bool result = SingleAppInstance.IsAlreadyRunning();
@@ -343,7 +343,7 @@ public class SingleAppInstanceTests
 
 		ProcessInfo processInfo = DescribeProcess(helper.Process);
 		processInfo.StartTime = default;
-		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(processInfo));
+		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(processInfo, TestJsonContext.Default.ProcessInfo));
 
 		// Act
 		bool result = SingleAppInstance.IsAlreadyRunning();
@@ -463,7 +463,7 @@ public class SingleAppInstanceTests
 			MainModuleFileName = "fake.exe",
 		};
 
-		string json = JsonSerializer.Serialize(processInfo);
+		string json = JsonSerializer.Serialize(processInfo, TestJsonContext.Default.ProcessInfo);
 		File.WriteAllText(pidFilePath, json);
 
 		// Act
@@ -500,7 +500,7 @@ public class SingleAppInstanceTests
 			MainModuleFileName = "fake.exe",
 		};
 
-		string json = JsonSerializer.Serialize(processInfo);
+		string json = JsonSerializer.Serialize(processInfo, TestJsonContext.Default.ProcessInfo);
 		File.WriteAllText(pidFilePath, json);
 
 		// Act
@@ -526,7 +526,7 @@ public class SingleAppInstanceTests
 
 		// Verify the PID file content matches the current process
 		string fileContent = File.ReadAllText(pidFilePath);
-		ProcessInfo? processInfo = JsonSerializer.Deserialize<ProcessInfo>(fileContent);
+		ProcessInfo? processInfo = JsonSerializer.Deserialize(fileContent, TestJsonContext.Default.ProcessInfo);
 		Assert.IsNotNull(processInfo);
 		Assert.AreEqual(Environment.ProcessId, processInfo.ProcessId);
 	}
@@ -556,7 +556,7 @@ public class SingleAppInstanceTests
 		string pidFilePath = SingleAppInstance.PidFilePath;
 		using HelperProcess helper = HelperProcess.Start("TornPidHelper");
 
-		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(DescribeProcess(helper.Process)) + "0\"}");
+		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(DescribeProcess(helper.Process), TestJsonContext.Default.ProcessInfo) + "0\"}");
 
 		// Act
 		bool result = SingleAppInstance.IsAlreadyRunning();
@@ -572,7 +572,7 @@ public class SingleAppInstanceTests
 		string pidFilePath = SingleAppInstance.PidFilePath;
 		using HelperProcess helper = HelperProcess.Start("TornPidHelper");
 
-		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(DescribeProcess(helper.Process)) + "0\"}");
+		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(DescribeProcess(helper.Process), TestJsonContext.Default.ProcessInfo) + "0\"}");
 
 		// Act
 		bool result = SingleAppInstance.ShouldLaunch();
@@ -691,7 +691,7 @@ public class SingleAppInstanceTests
 
 				try
 				{
-					if (JsonSerializer.Deserialize<ProcessInfo>(content) is null)
+					if (JsonSerializer.Deserialize(content, TestJsonContext.Default.ProcessInfo) is null)
 					{
 						partialReads++;
 						lastPartialContent = content;
@@ -772,7 +772,7 @@ public class SingleAppInstanceTests
 
 		// Assert
 		Assert.IsTrue(result);
-		ProcessInfo? processInfo = JsonSerializer.Deserialize<ProcessInfo>(File.ReadAllText(SingleAppInstance.PidFilePath));
+		ProcessInfo? processInfo = JsonSerializer.Deserialize(File.ReadAllText(SingleAppInstance.PidFilePath), TestJsonContext.Default.ProcessInfo);
 		Assert.IsNotNull(processInfo);
 		Assert.AreEqual(Environment.ProcessId, processInfo.ProcessId);
 	}
@@ -824,7 +824,7 @@ public class SingleAppInstanceTests
 		ProcessInfo? deserialized = null;
 		try
 		{
-			deserialized = JsonSerializer.Deserialize<ProcessInfo>(content);
+			deserialized = JsonSerializer.Deserialize(content, TestJsonContext.Default.ProcessInfo);
 		}
 		catch (JsonException)
 		{
@@ -846,7 +846,7 @@ public class SingleAppInstanceTests
 		// Assert
 		Assert.IsTrue(File.Exists(SingleAppInstance.PidFilePath));
 		string content = File.ReadAllText(SingleAppInstance.PidFilePath);
-		ProcessInfo? processInfo = JsonSerializer.Deserialize<ProcessInfo>(content);
+		ProcessInfo? processInfo = JsonSerializer.Deserialize(content, TestJsonContext.Default.ProcessInfo);
 		Assert.IsNotNull(processInfo);
 		Assert.AreEqual(Environment.ProcessId, processInfo.ProcessId);
 	}
@@ -1078,8 +1078,10 @@ public class SingleAppInstanceTests
 		}
 	}
 
-	// This class needs to mirror the internal ProcessInfo class for testing
-	private sealed class ProcessInfo
+	// This class needs to mirror the internal ProcessInfo class for testing. It is read and written
+	// through TestJsonContext because the test project, like a trimmed or Native AOT app, runs with
+	// reflection-based serialization disabled.
+	internal sealed class ProcessInfo
 	{
 		public int ProcessId { get; set; }
 		public string? ProcessName { get; set; }

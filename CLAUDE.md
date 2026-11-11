@@ -55,13 +55,15 @@ Internal methods `IsAlreadyRunning()` and `WritePidFile()` are exposed to tests 
 
 JSON-serialized `ProcessInfo` with fields: `ProcessId`, `ProcessName`, `StartTime`, `MainModuleFileName`. Includes backward compatibility for legacy files that stored only a plain integer PID.
 
+Serialization goes through the source-generated `ProcessInfoJsonContext`, never the reflection overloads: apps published trimmed or Native AOT run with reflection-based System.Text.Json disabled. The library sets `IsAotCompatible` on net7.0+, so a reflection call is a build error (IL2026/IL3050). The test project sets `JsonSerializerIsReflectionEnabledByDefault=false` and reads the PID file through its own `TestJsonContext`, so every test runs the way those apps do.
+
 ### Multi-targeting
 
 The library targets multiple frameworks via `ktsu.Sdk`. Uses `#if NET5_0_OR_GREATER` preprocessor directives (e.g., `Environment.ProcessId` vs `Process.GetCurrentProcess().Id`).
 
 ## Testing
 
-Tests use MSTest (`MSTest.Sdk`) targeting net10.0 only. Tests are marked `[DoNotParallelize]` because they share the PID file on disk. Each test cleans up the PID file in `[TestInitialize]`. The test project mirrors the internal `ProcessInfo` class as a private nested class for deserialization.
+Tests use MSTest (`MSTest.Sdk`) targeting net10.0 only. Tests are marked `[DoNotParallelize]` because they share the PID file on disk. Each test cleans up the PID file in `[TestInitialize]`. The test project mirrors the internal `ProcessInfo` class as a nested class, serialized through `TestJsonContext`.
 
 ## CI/CD
 
