@@ -134,6 +134,20 @@ public static class SingleAppInstance
 		/// Gets or sets the main module filename of the process.
 		/// </summary>
 		public string? MainModuleFileName { get; set; }
+
+		/// <summary>
+		/// Gets or sets, on Linux, the process's start time in clock ticks since boot, read from field 22
+		/// of <c>/proc/&lt;pid&gt;/stat</c>. Unlike <see cref="StartTime"/>, it does not move when the
+		/// wall clock is stepped.
+		/// </summary>
+		public long? LinuxStartTicks { get; set; }
+
+		/// <summary>
+		/// Gets or sets, on Linux, the boot the process started in, read from
+		/// <c>/proc/sys/kernel/random/boot_id</c>. <see cref="LinuxStartTicks"/> only names a process
+		/// within one boot.
+		/// </summary>
+		public string? LinuxBootId { get; set; }
 	}
 
 	/// <summary>
@@ -481,7 +495,89 @@ public static class SingleAppInstance
 	/// recorded, and processes whose start time cannot be read, keep the name and module check alone.
 	/// </remarks>
 	private static bool HasStoredStartTime(Process runningProcess, ProcessInfo storedProcess) =>
+		MatchesStoredLinuxIdentity(storedProcess, ReadLinuxIdentity(runningProcess.Id)) ??
 		HasStoredStartTime(() => runningProcess.StartTime, storedProcess.StartTime);
+
+	/// <summary>
+	/// Compares a running process's Linux identity with the one stored in the PID file.
+	/// </summary>
+	/// <param name="storedProcess">The process information read from the PID file.</param>
+	/// <param name="runningIdentity">The running process's identity, or <see langword="null"/> when it cannot be read.</param>
+	/// <returns>
+	/// Whether the identities match, or <see langword="null"/> when either side has none and the wall-clock
+	/// start time has to be compared instead.
+	/// </returns>
+	/// <remarks>
+	/// On Linux, .NET derives another process's <see cref="Process.StartTime"/> from the current wall clock,
+	/// so it moves whenever the clock is stepped (an NTP correction, a resume from suspend), and a running
+	/// instance would no longer match its own PID file. The start time in clock ticks since boot, together
+	/// with the boot it counts from, names the process without depending on the wall clock.
+	/// </remarks>
+	internal static bool? MatchesStoredLinuxIdentity(ProcessInfo storedProcess, (long StartTicks, string BootId)? runningIdentity)
+	{
+		if (storedProcess.LinuxStartTicks is not long storedStartTicks ||
+			string.IsNullOrEmpty(storedProcess.LinuxBootId) ||
+			runningIdentity is not (long runningStartTicks, string runningBootId))
+		{
+			return null;
+		}
+
+		return storedStartTicks == runningStartTicks &&
+			string.Equals(storedProcess.LinuxBootId, runningBootId, StringComparison.Ordinal);
+	}
+
+	/// <summary>
+	/// Reads a process's start time in clock ticks since boot, and the current boot's ID, on Linux.
+	/// </summary>
+	/// <param name="processId">The process to read.</param>
+	/// <returns>The process's identity, or <see langword="null"/> when not on Linux or it cannot be read.</returns>
+	internal static (long StartTicks, string BootId)? ReadLinuxIdentity(int processId)
+	{
+		if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+		{
+			return null;
+		}
+
+		try
+		{
+			string bootId = File.ReadAllText("/proc/sys/kernel/random/boot_id").Trim();
+			long? startTicks = ParseLinuxStartTicks(File.ReadAllText($"/proc/{processId.ToString(CultureInfo.InvariantCulture)}/stat"));
+			return startTicks is long ticks && bootId.Length > 0 ? (ticks, bootId) : null;
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			// The process has exited, or /proc is unavailable
+			return null;
+		}
+	}
+
+	/// <summary>
+	/// Reads the start time field (field 22) from the contents of <c>/proc/&lt;pid&gt;/stat</c>.
+	/// </summary>
+	/// <param name="stat">The contents of the stat file.</param>
+	/// <returns>The start time in clock ticks since boot, or <see langword="null"/> when the contents can't be parsed.</returns>
+	/// <remarks>
+	/// Field 2 is the command name in parentheses, and may itself hold spaces and parentheses, so the
+	/// fields are counted from the last closing parenthesis, after which field 3 begins.
+	/// </remarks>
+	internal static long? ParseLinuxStartTicks(string stat)
+	{
+		const int StartTimeField = 22;
+		const int FirstFieldAfterCommand = 3;
+
+		int commandEnd = stat.LastIndexOf(')');
+		if (commandEnd < 0)
+		{
+			return null;
+		}
+
+		string[] fields = stat[(commandEnd + 1)..].Split([' '], StringSplitOptions.RemoveEmptyEntries);
+		int index = StartTimeField - FirstFieldAfterCommand;
+		return index < fields.Length &&
+			long.TryParse(fields[index], NumberStyles.None, CultureInfo.InvariantCulture, out long startTicks)
+				? startTicks
+				: null;
+	}
 
 	/// <summary>
 	/// Checks whether a running process's start time matches the stored one.
@@ -603,6 +699,12 @@ public static class SingleAppInstance
 			StartTime = currentProcess.StartTime,
 			MainModuleFileName = currentProcess.MainModule?.FileName
 		};
+
+		if (ReadLinuxIdentity(currentProcess.Id) is (long startTicks, string bootId))
+		{
+			processInfo.LinuxStartTicks = startTicks;
+			processInfo.LinuxBootId = bootId;
+		}
 
 		string json = JsonSerializer.Serialize(processInfo, ProcessInfoJsonContext.Default.ProcessInfo);
 		string pidFilePath = PidFilePath;

@@ -53,7 +53,7 @@ Internal methods `IsAlreadyRunning()` and `WritePidFile()` are exposed to tests 
 
 ### PID File Format
 
-JSON-serialized `ProcessInfo` with fields: `ProcessId`, `ProcessName`, `StartTime`, `MainModuleFileName`. Includes backward compatibility for legacy files that stored only a plain integer PID.
+JSON-serialized `ProcessInfo` with fields: `ProcessId`, `ProcessName`, `StartTime`, `MainModuleFileName`, and on Linux `LinuxStartTicks` (field 22 of `/proc/<pid>/stat`) and `LinuxBootId`. On Linux, .NET derives another process's `StartTime` from the current wall clock, so it moves when the clock is stepped. When both the PID file and the running process have the Linux identity, it is compared instead of `StartTime`. Includes backward compatibility for legacy files that stored only a plain integer PID.
 
 Serialization goes through the source-generated `ProcessInfoJsonContext`, never the reflection overloads: apps published trimmed or Native AOT run with reflection-based System.Text.Json disabled. The library sets `IsAotCompatible` on net7.0+, so a reflection call is a build error (IL2026/IL3050). The test project sets `JsonSerializerIsReflectionEnabledByDefault=false` and reads the PID file through its own `TestJsonContext`, so every test runs the way those apps do.
 
