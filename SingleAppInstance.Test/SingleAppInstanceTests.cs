@@ -367,6 +367,57 @@ public class SingleAppInstanceTests
 	}
 
 	[TestMethod]
+	public void IsAlreadyRunning_WhenStoredProcessIsAnUnreapedZombie_ShouldReturnFalse()
+	{
+		// Arrange - an instance that has exited but whose parent has not reaped it still has a
+		// /proc entry with its name, but no main module, so it must not pass the name fallback
+		using ZombieProcess zombie = ZombieProcess.Start("ZombieHelper");
+		ProcessInfo processInfo = new()
+		{
+			ProcessId = zombie.ProcessId,
+			ProcessName = zombie.ProcessName,
+			StartTime = zombie.StartTime,
+			MainModuleFileName = zombie.ExecutablePath,
+		};
+		File.WriteAllText(SingleAppInstance.PidFilePath, JsonSerializer.Serialize(processInfo, TestJsonContext.Default.ProcessInfo));
+
+		// Act
+		bool result = SingleAppInstance.IsAlreadyRunning();
+
+		// Assert
+		Assert.IsFalse(result, "An instance that has exited but not been reaped is not another instance");
+	}
+
+	[TestMethod]
+	public void IsAlreadyRunning_WithLegacyPidFile_WhenProcessIsAnUnreapedZombie_ShouldReturnFalse()
+	{
+		// Arrange - a zombie carrying this application's own process name, named by a legacy PID file
+		using Process currentProcess = Process.GetCurrentProcess();
+		using ZombieProcess zombie = ZombieProcess.Start(currentProcess.ProcessName);
+		File.WriteAllText(SingleAppInstance.PidFilePath, zombie.ProcessId.ToString(CultureInfo.InvariantCulture));
+
+		// Act
+		bool result = SingleAppInstance.IsAlreadyRunning();
+
+		// Assert
+		Assert.IsFalse(result, "A legacy PID naming an instance that has exited but not been reaped is not another instance");
+	}
+
+	[TestMethod]
+	[DataRow("1234 (sleep) S 1 1234 1234 0 -1", 'S')]
+	[DataRow("1234 (a) b (c)) Z 1 1234 1234 0 -1", 'Z')]
+	[DataRow("1234 (dead) X 1", 'X')]
+	public void ParseLinuxProcessState_ShouldReadTheFieldAfterTheLastParenthesis(string stat, char expected) =>
+		Assert.AreEqual<char?>(expected, SingleAppInstance.ParseLinuxProcessState(stat));
+
+	[TestMethod]
+	[DataRow("")]
+	[DataRow("1234 sleep S")]
+	[DataRow("1234 (sleep)   ")]
+	public void ParseLinuxProcessState_WhenStatCannotBeParsed_ShouldReturnNull(string stat) =>
+		Assert.IsNull(SingleAppInstance.ParseLinuxProcessState(stat));
+
+	[TestMethod]
 	public void IsStoredProcessRunning_WhenMainModuleIsUnreadableAndStartTimeDiffers_ShouldReturnFalse()
 	{
 		// Arrange
@@ -1179,6 +1230,135 @@ public class SingleAppInstanceTests
 			}
 
 			Process.Dispose();
+
+			try
+			{
+				Directory.Delete(temporaryDirectory, recursive: true);
+			}
+			catch (IOException)
+			{
+				// Temporary files are left for the operating system to reclaim
+			}
+			catch (UnauthorizedAccessException)
+			{
+				// Temporary files are left for the operating system to reclaim
+			}
+		}
+	}
+
+	/// <summary>
+	/// A child process that has exited but that its parent never reaps, as left behind by a launcher
+	/// or wrapper that doesn't wait for the processes it starts. Linux only.
+	/// </summary>
+	/// <remarks>
+	/// A shell starts a copy of <c>sleep</c>, named as requested, that exits at once, then replaces itself
+	/// with a long <c>sleep</c> that never waits for it. Disposing kills that parent, so init reaps the zombie.
+	/// </remarks>
+	private sealed class ZombieProcess : IDisposable
+	{
+		private readonly Process parent;
+		private readonly string temporaryDirectory;
+
+		public int ProcessId { get; }
+
+		public string ProcessName { get; }
+
+		public DateTime StartTime { get; }
+
+		public string ExecutablePath { get; }
+
+		private ZombieProcess(Process parent, string temporaryDirectory, int processId, string processName, DateTime startTime, string executablePath)
+		{
+			this.parent = parent;
+			this.temporaryDirectory = temporaryDirectory;
+			ProcessId = processId;
+			ProcessName = processName;
+			StartTime = startTime;
+			ExecutablePath = executablePath;
+		}
+
+		public static ZombieProcess Start(string processName)
+		{
+			if (!OperatingSystem.IsLinux())
+			{
+				Assert.Inconclusive("Unreaped zombie processes are a Linux scenario");
+				throw new PlatformNotSupportedException();
+			}
+
+			string temporaryDirectory = Path.Combine(Path.GetTempPath(), $"{nameof(SingleAppInstanceTests)}_{Guid.NewGuid():N}");
+			Directory.CreateDirectory(temporaryDirectory);
+
+			string executable = Path.Combine(temporaryDirectory, processName);
+			File.Copy("/bin/sleep", executable);
+			File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+			ProcessStartInfo startInfo = new("/bin/sh")
+			{
+				UseShellExecute = false,
+				CreateNoWindow = true,
+				RedirectStandardOutput = true,
+			};
+			startInfo.ArgumentList.Add("-c");
+			startInfo.ArgumentList.Add("\"$0\" 0 & echo $!; exec /bin/sleep 120");
+			startInfo.ArgumentList.Add(executable);
+
+			Process? parent = Process.Start(startInfo);
+			Assert.IsNotNull(parent, "Should be able to start the zombie's parent process");
+
+			string? line = parent.StandardOutput.ReadLine();
+			if (!int.TryParse(line, NumberStyles.Integer, CultureInfo.InvariantCulture, out int processId))
+			{
+				parent.Kill();
+				parent.Dispose();
+				Assert.Inconclusive($"The zombie's parent did not report its child's PID; it wrote '{line}'");
+			}
+
+			string statPath = $"/proc/{processId.ToString(CultureInfo.InvariantCulture)}/stat";
+			Stopwatch stopwatch = Stopwatch.StartNew();
+			while (SingleAppInstance.ParseLinuxProcessState(ReadOrEmpty(statPath)) != 'Z')
+			{
+				if (stopwatch.Elapsed > TimeSpan.FromSeconds(10))
+				{
+					parent.Kill();
+					parent.Dispose();
+					Assert.Inconclusive("The child never became a zombie");
+				}
+
+				Thread.Sleep(20);
+			}
+
+			using Process zombie = Process.GetProcessById(processId);
+			return new ZombieProcess(parent, temporaryDirectory, processId, zombie.ProcessName, zombie.StartTime, executable);
+		}
+
+		private static string ReadOrEmpty(string path)
+		{
+			try
+			{
+				return File.ReadAllText(path);
+			}
+			catch (IOException)
+			{
+				return string.Empty;
+			}
+		}
+
+		public void Dispose()
+		{
+			try
+			{
+				if (!parent.HasExited)
+				{
+					parent.Kill();
+					parent.WaitForExit(5000);
+				}
+			}
+			catch (InvalidOperationException)
+			{
+				// Process already exited
+			}
+
+			parent.Dispose();
 
 			try
 			{

@@ -398,7 +398,7 @@ public static class SingleAppInstance
 		{
 			using Process runningProcess = Process.GetProcessById(storedProcess.ProcessId);
 
-			if (runningProcess.HasExited ||
+			if (HasExited(runningProcess) ||
 				!string.Equals(runningProcess.ProcessName, storedProcess.ProcessName, StringComparison.Ordinal))
 			{
 				return false;
@@ -432,6 +432,82 @@ public static class SingleAppInstance
 	}
 
 	/// <summary>
+	/// Checks whether a process has exited, counting a Linux process that has exited but not yet been
+	/// reaped by its parent.
+	/// </summary>
+	/// <param name="process">The process to check.</param>
+	/// <returns><c>true</c> if the process has exited; otherwise, <c>false</c>.</returns>
+	/// <remarks>
+	/// A zombie keeps its <c>/proc/&lt;pid&gt;</c> entry until its parent waits for it, so
+	/// <see cref="Process.HasExited"/> is <see langword="false"/> and its name still reads back, while its
+	/// empty memory map leaves no main module. Without this check it would pass the name fallback and
+	/// block every launch until the parent reaps it.
+	/// </remarks>
+	private static bool HasExited(Process process) => process.HasExited || IsLinuxZombie(process.Id);
+
+	/// <summary>
+	/// Checks whether a Linux process has exited but not yet been reaped.
+	/// </summary>
+	/// <param name="processId">The process ID.</param>
+	/// <returns>
+	/// <c>true</c> if <c>/proc/&lt;pid&gt;/stat</c> reports the zombie (<c>Z</c>) or dead (<c>X</c>) state,
+	/// or the process has gone; <c>false</c> on other platforms, for a live process, or when the state cannot be read.
+	/// </returns>
+	private static bool IsLinuxZombie(int processId)
+	{
+		if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+		{
+			return false;
+		}
+
+		string stat;
+		try
+		{
+			stat = File.ReadAllText($"/proc/{processId.ToString(CultureInfo.InvariantCulture)}/stat");
+		}
+		catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+		{
+			// The process has gone, which is as exited as a process gets
+			return true;
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			return false;
+		}
+
+		char? state = ParseLinuxProcessState(stat);
+		return state is 'Z' or 'X';
+	}
+
+	/// <summary>
+	/// Reads the state field from the contents of a Linux <c>/proc/&lt;pid&gt;/stat</c> file.
+	/// </summary>
+	/// <param name="stat">The contents of the stat file.</param>
+	/// <returns>The state character, or <see langword="null"/> when the contents cannot be parsed.</returns>
+	/// <remarks>
+	/// The state follows the command name, which is wrapped in parentheses and may itself contain spaces
+	/// and parentheses, so it is found after the last closing parenthesis.
+	/// </remarks>
+	internal static char? ParseLinuxProcessState(string stat)
+	{
+		int commandEnd = stat.LastIndexOf(')');
+		if (commandEnd < 0)
+		{
+			return null;
+		}
+
+		for (int i = commandEnd + 1; i < stat.Length; i++)
+		{
+			if (!char.IsWhiteSpace(stat[i]))
+			{
+				return stat[i];
+			}
+		}
+
+		return null;
+	}
+
+	/// <summary>
 	/// Fallback check when full process access is denied. Verifies only the process name.
 	/// </summary>
 	/// <param name="storedProcess">The process information read from the PID file.</param>
@@ -442,7 +518,7 @@ public static class SingleAppInstance
 		{
 			using Process process = Process.GetProcessById(storedProcess.ProcessId);
 
-			return !process.HasExited &&
+			return !HasExited(process) &&
 				string.Equals(process.ProcessName, storedProcess.ProcessName, StringComparison.Ordinal) && HasStoredStartTime(process, storedProcess);
 		}
 		catch (ArgumentException)
@@ -532,7 +608,7 @@ public static class SingleAppInstance
 		{
 			using Process runningProcess = Process.GetProcessById(pid);
 
-			return !runningProcess.HasExited &&
+			return !HasExited(runningProcess) &&
 				IsSameApplicationName(runningProcess.ProcessName, currentProcessName);
 		}
 		catch (ArgumentException)
