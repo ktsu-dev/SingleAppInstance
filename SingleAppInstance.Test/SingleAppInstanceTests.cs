@@ -1151,10 +1151,15 @@ public class SingleAppInstanceTests
 		public static HelperProcess Start(string processName)
 		{
 			bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+			bool isLinux = RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
+
+			// On Linux the copy is a shell that waits on its own sleep child, rather than sleep itself:
+			// a multi-call coreutils (uutils, as on newer Ubuntu images) picks the utility from the
+			// executable's name, so a copy of its sleep under another name exits at once
 			string systemExecutable = isWindows
 				? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "ping.exe")
-				: "/bin/sleep";
-			string arguments = isWindows ? "-n 120 127.0.0.1" : "120";
+				: isLinux ? "/bin/sh" : "/bin/sleep";
+			string arguments = isWindows ? "-n 120 127.0.0.1" : isLinux ? "-c \"sleep 120; exit 0\"" : "120";
 
 			string temporaryDirectory = Path.Combine(Path.GetTempPath(), $"{nameof(SingleAppInstanceTests)}_{Guid.NewGuid():N}");
 			Directory.CreateDirectory(temporaryDirectory);
@@ -1251,7 +1256,7 @@ public class SingleAppInstanceTests
 	/// or wrapper that doesn't wait for the processes it starts. Linux only.
 	/// </summary>
 	/// <remarks>
-	/// A shell starts a copy of <c>sleep</c>, named as requested, that exits at once, then replaces itself
+	/// A shell starts a copy of <c>sh</c>, named as requested, that exits at once, then replaces itself
 	/// with a long <c>sleep</c> that never waits for it. Disposing kills that parent, so init reaps the zombie.
 	/// </remarks>
 	private sealed class ZombieProcess : IDisposable
@@ -1289,7 +1294,7 @@ public class SingleAppInstanceTests
 			Directory.CreateDirectory(temporaryDirectory);
 
 			string executable = Path.Combine(temporaryDirectory, processName);
-			File.Copy("/bin/sleep", executable);
+			File.Copy("/bin/sh", executable);
 			File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
 
 			ProcessStartInfo startInfo = new("/bin/sh")
@@ -1299,7 +1304,7 @@ public class SingleAppInstanceTests
 				RedirectStandardOutput = true,
 			};
 			startInfo.ArgumentList.Add("-c");
-			startInfo.ArgumentList.Add("\"$0\" 0 & echo $!; exec /bin/sleep 120");
+			startInfo.ArgumentList.Add("\"$0\" -c 'exit 0' & echo $!; exec sleep 120");
 			startInfo.ArgumentList.Add(executable);
 
 			Process? parent = Process.Start(startInfo);
