@@ -1221,7 +1221,7 @@ public class SingleAppInstanceTests
 			{
 				if (!Process.HasExited)
 				{
-					Process.Kill();
+					Process.Kill(entireProcessTree: true);
 					Process.WaitForExit(5000);
 				}
 			}
@@ -1313,7 +1313,7 @@ public class SingleAppInstanceTests
 			string? line = parent.StandardOutput.ReadLine();
 			if (!int.TryParse(line, NumberStyles.Integer, CultureInfo.InvariantCulture, out int processId))
 			{
-				parent.Kill();
+				parent.Kill(entireProcessTree: true);
 				parent.Dispose();
 				Assert.Inconclusive($"The zombie's parent did not report its child's PID; it wrote '{line}'");
 			}
@@ -1324,7 +1324,7 @@ public class SingleAppInstanceTests
 			{
 				if (stopwatch.Elapsed > TimeSpan.FromSeconds(10))
 				{
-					parent.Kill();
+					parent.Kill(entireProcessTree: true);
 					parent.Dispose();
 					Assert.Inconclusive("The child never became a zombie");
 				}
@@ -1354,7 +1354,7 @@ public class SingleAppInstanceTests
 			{
 				if (!parent.HasExited)
 				{
-					parent.Kill();
+					parent.Kill(entireProcessTree: true);
 					parent.WaitForExit(5000);
 				}
 			}
