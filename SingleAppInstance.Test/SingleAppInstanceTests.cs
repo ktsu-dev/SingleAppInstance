@@ -461,6 +461,116 @@ public class SingleAppInstanceTests
 	}
 
 	[TestMethod]
+	public void IsAlreadyRunning_WhenWallClockWasSteppedAfterTheInstanceStarted_ShouldReturnTrue()
+	{
+		// Arrange - on Linux the running process's StartTime is the wall clock minus its uptime, so an NTP
+		// step or a resume moves it away from the value stored at launch. The stored Linux identity doesn't move.
+		if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+		{
+			Assert.Inconclusive("The wall clock only moves another process's StartTime on Linux");
+		}
+
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		using HelperProcess helper = HelperProcess.Start("StartTimeHelper");
+
+		ProcessInfo processInfo = DescribeProcessWithLinuxIdentity(helper.Process);
+		processInfo.StartTime = processInfo.StartTime.AddSeconds(-5);
+		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(processInfo, TestJsonContext.Default.ProcessInfo));
+
+		// Act
+		bool result = SingleAppInstance.IsAlreadyRunning();
+
+		// Assert
+		Assert.IsTrue(result, "A wall-clock step must not make a running instance look like a recycled PID");
+	}
+
+	[TestMethod]
+	public void IsAlreadyRunning_WhenLinuxStartTicksDiffer_ShouldReturnFalse()
+	{
+		// Arrange - the wall-clock start time matches, but the process holding the PID started at a different
+		// tick, which is a PID recycled onto another process run by the same host
+		if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+		{
+			Assert.Inconclusive("The Linux identity is only recorded on Linux");
+		}
+
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		using HelperProcess helper = HelperProcess.Start("StartTimeHelper");
+
+		ProcessInfo processInfo = DescribeProcessWithLinuxIdentity(helper.Process);
+		processInfo.LinuxStartTicks--;
+		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(processInfo, TestJsonContext.Default.ProcessInfo));
+
+		// Act
+		bool result = SingleAppInstance.IsAlreadyRunning();
+
+		// Assert
+		Assert.IsFalse(result, "Should return false when the process holding the PID started at a different tick");
+	}
+
+	[TestMethod]
+	public void IsAlreadyRunning_WhenLinuxBootIdDiffers_ShouldReturnFalse()
+	{
+		// Arrange - a PID file from a previous boot can name a start tick that a process of this boot shares
+		if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+		{
+			Assert.Inconclusive("The Linux identity is only recorded on Linux");
+		}
+
+		string pidFilePath = SingleAppInstance.PidFilePath;
+		using HelperProcess helper = HelperProcess.Start("StartTimeHelper");
+
+		ProcessInfo processInfo = DescribeProcessWithLinuxIdentity(helper.Process);
+		processInfo.LinuxBootId = Guid.NewGuid().ToString();
+		File.WriteAllText(pidFilePath, JsonSerializer.Serialize(processInfo, TestJsonContext.Default.ProcessInfo));
+
+		// Act
+		bool result = SingleAppInstance.IsAlreadyRunning();
+
+		// Assert
+		Assert.IsFalse(result, "Should return false when the PID file was written in a different boot");
+	}
+
+	[TestMethod]
+	public void WritePidFile_OnLinux_ShouldRecordTheClockIndependentIdentity()
+	{
+		if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+		{
+			Assert.Inconclusive("The Linux identity is only recorded on Linux");
+		}
+
+		SingleAppInstance.WritePidFile();
+
+		ProcessInfo? processInfo = JsonSerializer.Deserialize(File.ReadAllText(SingleAppInstance.PidFilePath), TestJsonContext.Default.ProcessInfo);
+		Assert.IsNotNull(processInfo);
+		using Process currentProcess = Process.GetCurrentProcess();
+		ProcessInfo expected = DescribeProcessWithLinuxIdentity(currentProcess);
+		Assert.AreEqual(expected.LinuxStartTicks, processInfo.LinuxStartTicks);
+		Assert.AreEqual(expected.LinuxBootId, processInfo.LinuxBootId);
+	}
+
+	[TestMethod]
+	public void MatchesStoredLinuxIdentity_ComparesBothFieldsAndDefersWhenEitherSideHasNone()
+	{
+		// A stored identity with no running identity to compare falls back to the wall-clock check
+		SingleAppInstance.ProcessInfo stored = new() { LinuxStartTicks = 42, LinuxBootId = "boot" };
+
+		Assert.IsNull(SingleAppInstance.MatchesStoredLinuxIdentity(stored, null));
+		Assert.IsNull(SingleAppInstance.MatchesStoredLinuxIdentity(new SingleAppInstance.ProcessInfo(), (42, "boot")));
+		Assert.IsTrue(SingleAppInstance.MatchesStoredLinuxIdentity(stored, (42, "boot")));
+		Assert.IsFalse(SingleAppInstance.MatchesStoredLinuxIdentity(stored, (43, "boot")));
+		Assert.IsFalse(SingleAppInstance.MatchesStoredLinuxIdentity(stored, (42, "other")));
+	}
+
+	[TestMethod]
+	[DataRow("1234 (sleep) S 1 1234 1234 0 -1 4194560 100 0 0 0 0 0 0 0 20 0 1 0 987654 8192000 200", 987654L)]
+	[DataRow("1234 (a) b (c)) R 1 1234 1234 0 -1 4194560 100 0 0 0 0 0 0 0 20 0 1 0 55 8192000 200", 55L)]
+	[DataRow("1234 (short) S 1 2", null)]
+	[DataRow("no command name", null)]
+	public void ParseLinuxStartTicks_ReadsFieldTwentyTwoAfterTheCommandName(string stat, long? expected) =>
+		Assert.AreEqual(expected, SingleAppInstance.ParseLinuxStartTicks(stat));
+
+	[TestMethod]
 	public void HasStoredStartTime_WithinTolerance_ShouldReturnTrue()
 	{
 		DateTime stored = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
@@ -1067,6 +1177,20 @@ public class SingleAppInstanceTests
 	};
 
 	/// <summary>
+	/// Describes a process as a Linux PID file does, reading its start tick and the boot ID from /proc
+	/// independently of the library.
+	/// </summary>
+	private static ProcessInfo DescribeProcessWithLinuxIdentity(Process process)
+	{
+		ProcessInfo processInfo = DescribeProcess(process);
+		string stat = File.ReadAllText($"/proc/{process.Id}/stat");
+		string[] fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
+		processInfo.LinuxStartTicks = long.Parse(fields[19], System.Globalization.CultureInfo.InvariantCulture);
+		processInfo.LinuxBootId = File.ReadAllText("/proc/sys/kernel/random/boot_id").Trim();
+		return processInfo;
+	}
+
+	/// <summary>
 	/// Finds a running process that is neither the current process nor shares its process name.
 	/// </summary>
 	private static Process? FindRunningProcessWithDifferentName(Process currentProcess)
@@ -1389,5 +1513,7 @@ public class SingleAppInstanceTests
 		public string? ProcessName { get; set; }
 		public DateTime StartTime { get; set; }
 		public string? MainModuleFileName { get; set; }
+		public long? LinuxStartTicks { get; set; }
+		public string? LinuxBootId { get; set; }
 	}
 }
