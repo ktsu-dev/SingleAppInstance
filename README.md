@@ -17,7 +17,7 @@
 ## Features
 
 - **Single Instance Enforcement**: Prevents multiple copies of your application from running simultaneously
-- **Enhanced Process Identification**: Verifies running instances using multiple attributes (PID, process name, start time, executable path) for accurate detection
+- **Enhanced Process Identification**: Verifies running instances using multiple attributes (PID, process name, start time, executable path; on Linux, a start time that doesn't move when the wall clock is stepped) for accurate detection
 - **Race Condition Handling**: Includes a built-in 1-second delay to safely detect simultaneous startup attempts
 - **PID File Management**: Stores process information as JSON in the application data directory, replacing the file atomically so a racing instance never reads a partial write, and treating a PID file another instance is holding as that instance starting rather than throwing. A PID file or folder the current user cannot read or write, such as one a run under `sudo` left owned by root, throws an `UnauthorizedAccessException` or `IOException` naming the file instead of being mistaken for another instance
 - **Backward Compatibility**: Gracefully handles legacy PID files that stored only a plain integer PID, confirming the process name before treating a recycled PID as a running instance
