@@ -13,6 +13,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SingleAppInstance\SingleAppInstance.csproj" />
+    <!-- Only to check that the PID file stays where AppData.Path put it before #221. -->
+    <PackageReference Include="ktsu.AppDataStorage" />
   </ItemGroup>
 
 </Project>

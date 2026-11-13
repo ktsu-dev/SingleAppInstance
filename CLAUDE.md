@@ -38,9 +38,13 @@ This is a .NET library (`ktsu.SingleAppInstance`) that enforces single-instance 
 
 ### Dependencies
 
-- `ktsu.AppDataStorage` - Provides `AppData.Path` for PID file location
-- `ktsu.Semantics.Paths` - Type-safe path handling (`AbsoluteDirectoryPath`, `AbsoluteFilePath`, `FileName`)
 - `Polyfill` - Backfill APIs for older target frameworks
+
+The PID file path is built from plain BCL strings (`ApplicationData` / `AppDomain.CurrentDomain.FriendlyName` /
+`.SingleAppInstance.pid`), the folder `ktsu.AppDataStorage`'s `AppData.Path` resolves to. Do not route it back
+through ktsu.AppDataStorage or ktsu.Semantics: they are not trim- or AOT-safe, and the path is built in the
+static initializer, so a trimmed or Native AOT app would crash on its first `ShouldLaunch()` (#221). The test
+project references ktsu.AppDataStorage only to check the location has not moved.
 
 ## Architecture
 
@@ -63,7 +67,7 @@ The library targets multiple frameworks via `ktsu.Sdk`. Uses `#if NET5_0_OR_GREA
 
 ## Testing
 
-Tests use MSTest (`MSTest.Sdk`) targeting net10.0 only. Tests are marked `[DoNotParallelize]` because they share the PID file on disk. Each test cleans up the PID file in `[TestInitialize]`. The test project mirrors the internal `ProcessInfo` class as a nested class, serialized through `TestJsonContext`.
+Tests use MSTest (`MSTest.Sdk`) targeting net10.0 only. `PublishedConsumerTests` publishes a tiny consumer trimmed and Native AOT (with the properties in its project file, so they don't flow into the library's netstandard builds) and runs two instances of each, so the `IsAotCompatible` claim is exercised. Tests are marked `[DoNotParallelize]` because they share the PID file on disk. Each test cleans up the PID file in `[TestInitialize]`. The test project mirrors the internal `ProcessInfo` class as a nested class, serialized through `TestJsonContext`.
 
 ## CI/CD
 
