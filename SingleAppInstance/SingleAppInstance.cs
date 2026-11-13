@@ -8,17 +8,19 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
-using ktsu.AppDataStorage;
-using ktsu.Semantics.Paths;
-using ktsu.Semantics.Strings;
-
 /// <summary>
 /// Provides a mechanism to ensure that only one instance of an application is running at a time.
 /// </summary>
 public static class SingleAppInstance
 {
-	internal static AbsoluteDirectoryPath PidDirectoryPath { get; } = AppData.Path;
-	internal static AbsoluteFilePath PidFilePath { get; } = PidDirectoryPath / $".{nameof(SingleAppInstance)}.pid".As<FileName>();
+	// Built from plain BCL strings, not ktsu.AppDataStorage / ktsu.Semantics.Paths: those are not trim-
+	// or AOT-safe, and these initializers run on the first ShouldLaunch(), so a trimmed or Native AOT
+	// app would crash before it could decide anything (#221). The folder is the one AppData.Path
+	// resolves to, ApplicationData / AppDomain friendly name, so existing installs keep their PID file.
+	internal static string PidDirectoryPath { get; } = Path.Combine(
+		Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData, Environment.SpecialFolderOption.Create),
+		AppDomain.CurrentDomain.FriendlyName);
+	internal static string PidFilePath { get; } = Path.Combine(PidDirectoryPath, $".{nameof(SingleAppInstance)}.pid");
 
 	/// <summary>
 	/// Exits the application if another instance is already running.
