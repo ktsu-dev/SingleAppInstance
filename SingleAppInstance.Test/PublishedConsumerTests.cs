@@ -3,7 +3,6 @@
 namespace ktsu.SingleAppInstance.Test;
 
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -106,8 +105,24 @@ public class PublishedConsumerTests
 		}
 	}
 
-	private static string LibraryProjectPath([CallerFilePath] string testSourcePath = "") =>
-		Path.GetFullPath(Path.Combine(Path.GetDirectoryName(testSourcePath)!, "..", "SingleAppInstance", "SingleAppInstance.csproj"));
+	/// <summary>
+	/// Finds the library's project file by walking up from the test output folder. The source path
+	/// from [CallerFilePath] won't do: CI builds deterministically, which maps it to "/_/".
+	/// </summary>
+	private static string LibraryProjectPath()
+	{
+		for (DirectoryInfo? directory = new(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+		{
+			string candidate = Path.Combine(directory.FullName, "SingleAppInstance", "SingleAppInstance.csproj");
+			if (File.Exists(candidate))
+			{
+				return candidate;
+			}
+		}
+
+		Assert.Inconclusive($"SingleAppInstance.csproj was not found above {AppContext.BaseDirectory}");
+		return string.Empty;
+	}
 
 	private static Process StartConsumer(string executable, string arguments)
 	{
