@@ -1,8 +1,6 @@
-## v1.3.78 (patch)
+## v1.3.79-pre.1 (prerelease)
 
-Changes since v1.3.77:
+Changes since v1.3.78:
 
-- Recognise a running instance after the wall clock is stepped on Linux [patch] (#216) (matt-edmondson)
-- Treat an unreaped zombie instance as exited on Linux [patch] (#223) (matt-edmondson)
-- Build the PID file path from BCL strings so trimmed and AOT apps launch [patch] (#224) (matt-edmondson)
+- Bump the ktsu group with 10 updates (dependabot[bot])
 
